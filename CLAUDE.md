@@ -34,6 +34,41 @@ xcodebuild -project StatBar.xcodeproj -scheme StatBar test
 xcodebuild -project StatBar.xcodeproj -scheme StatBar -only-testing StatBarCoreTests/ClassName/methodName test
 ```
 
+## Release Process
+
+Every push to release must follow these steps:
+
+```bash
+# 1. Ensure all tests pass
+swift test
+
+# 2. Build release .app (auto-increments version.txt)
+./scripts/build-app.sh
+
+# 3. Zip the .app for distribution
+cd .build && zip -r StatBar-v1.0.0.zip StatBar.app && cd ..
+
+# 4. Commit and push changes
+git add -A
+git commit -m "<message>"
+git push
+
+# 5. Tag and create GitHub Release with zip asset
+git tag -a v1.0.0 -m "v1.0.0: <summary>"
+git push origin v1.0.0
+gh release create v1.0.0 \
+  --title "StatBar v1.0.0" \
+  --notes "$(cat <<'EOF'
+## What's New
+
+- <feature bullets>
+EOF
+  )" \
+  .build/StatBar-v1.0.0.zip
+```
+
+**Versioning:** semver (`CFBundleShortVersionString` in Info.plist). The build script auto-increments `CFBundleVersion`. Update `CHANGELOG.md` with the release entry before tagging.
+
 ## Architecture
 
 ```
