@@ -5,7 +5,11 @@ import requests
 import json
 import datetime
 
-API_KEY = "REDACTED"
+import os
+API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+if not API_KEY:
+    print("Set DEEPSEEK_API_KEY environment variable first")
+    exit(1)
 BASE_URL = "https://api.deepseek.com"
 
 session = requests.Session()
