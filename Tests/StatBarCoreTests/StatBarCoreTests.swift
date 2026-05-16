@@ -8,7 +8,7 @@ import Testing
         memory: MemoryMetrics(usedBytes: 65, totalBytes: 100)
     )
 
-    #expect(StatBarFormatter().menuTitle(for: snapshot) == "🔥23% 💾65% 🌐↓0↑0 💿0%")
+    #expect(StatBarFormatter().menuTitle(for: snapshot) == "🔥 23% 💾 65% 🌐 ↓0↑0 💿 0%")
 }
 
 @Test func percentValuesAreClamped() {
@@ -196,4 +196,113 @@ import Testing
     let c = DeepSeekMetrics(totalBalance: 20.0, currency: "CNY", isAvailable: true)
     #expect(a == b)
     #expect(a != c)
+}
+
+// MARK: - MenuBarConfig
+
+@Test func menuBarConfigDefaultAllVisible() {
+    let config = MenuBarConfig()
+    #expect(config.cpu.visible)
+    #expect(config.memory.visible)
+    #expect(config.network.visible)
+    #expect(config.disk.visible)
+}
+
+@Test func menuBarConfigDefaultStyleIsEmoji() {
+    let config = MenuBarConfig()
+    #expect(config.cpu.style == .emoji)
+    #expect(config.memory.style == .emoji)
+    #expect(config.network.style == .emoji)
+    #expect(config.disk.style == .emoji)
+}
+
+@Test func menuBarConfigRoundTripCodable() throws {
+    var config = MenuBarConfig()
+    config.cpu.visible = false
+    config.memory.style = .label
+    config.network.style = .number
+    config.disk.visible = true
+
+    let encoder = JSONEncoder()
+    let decoder = JSONDecoder()
+    let data = try encoder.encode(config)
+    let decoded = try decoder.decode(MenuBarConfig.self, from: data)
+
+    #expect(decoded == config)
+    #expect(decoded.cpu.visible == false)
+    #expect(decoded.memory.style == .label)
+    #expect(decoded.network.style == .number)
+    #expect(decoded.disk.visible == true)
+}
+
+// MARK: - Config-aware menu title
+
+@Test func menuTitleHidesItemsWhenNotVisible() {
+    var config = MenuBarConfig()
+    config.cpu.visible = false
+    config.memory.visible = false
+    config.network.visible = false
+
+    let snapshot = SystemSnapshot(
+        cpu: CPUMetrics(usage: 50),
+        memory: MemoryMetrics(usedBytes: 1, totalBytes: 1),
+        disk: DiskMetrics(usedBytes: 1, totalBytes: 2),
+        capturedAt: Date()
+    )
+    let title = StatBarFormatter().menuTitle(for: snapshot, config: config)
+    #expect(!title.contains("🔥"))
+    #expect(!title.contains("💾"))
+    #expect(!title.contains("🌐"))
+    #expect(title.contains("💿"))
+}
+
+@Test func menuTitleUsesLabelStyle() {
+    var config = MenuBarConfig()
+    config.cpu.style = .label
+    config.memory.visible = false
+    config.network.visible = false
+    config.disk.visible = false
+
+    let snapshot = SystemSnapshot(
+        cpu: CPUMetrics(usage: 80),
+        memory: MemoryMetrics(usedBytes: 0, totalBytes: 1),
+        capturedAt: Date()
+    )
+    let title = StatBarFormatter().menuTitle(for: snapshot, config: config)
+    #expect(title.contains("CPU"))
+    #expect(title.contains("80%"))
+    #expect(!title.contains("🔥"))
+    #expect(title == "CPU 80%")
+}
+
+@Test func menuTitleUsesNumberStyle() {
+    var config = MenuBarConfig()
+    config.cpu.style = .number
+    config.memory.visible = false
+    config.network.visible = false
+    config.disk.visible = false
+
+    let snapshot = SystemSnapshot(
+        cpu: CPUMetrics(usage: 90),
+        memory: MemoryMetrics(usedBytes: 0, totalBytes: 1),
+        capturedAt: Date()
+    )
+    let title = StatBarFormatter().menuTitle(for: snapshot, config: config)
+    #expect(title == "90%")
+}
+
+@Test func menuTitleReturnsStatBarWhenAllHidden() {
+    var config = MenuBarConfig()
+    config.cpu.visible = false
+    config.memory.visible = false
+    config.network.visible = false
+    config.disk.visible = false
+
+    let snapshot = SystemSnapshot(
+        cpu: CPUMetrics(usage: 0),
+        memory: MemoryMetrics(usedBytes: 0, totalBytes: 1),
+        capturedAt: Date()
+    )
+    let title = StatBarFormatter().menuTitle(for: snapshot, config: config)
+    #expect(title == "StatBar")
 }

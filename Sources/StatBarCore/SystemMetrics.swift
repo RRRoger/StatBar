@@ -134,7 +134,32 @@ public struct StatBarFormatter: Sendable {
     public init() {}
 
     public func menuTitle(for snapshot: SystemSnapshot) -> String {
-        "🔥\(wholePercent(snapshot.cpu.usage))% 💾\(wholePercent(snapshot.memory.usage))% 🌐↓\(compactRate(snapshot.network.downBytesPerSec))↑\(compactRate(snapshot.network.upBytesPerSec)) 💿\(wholePercent(snapshot.disk.usage))%"
+        menuTitle(for: snapshot, config: MenuBarConfig())
+    }
+
+    public func menuTitle(for snapshot: SystemSnapshot, config: MenuBarConfig) -> String {
+        let parts: [String] = [
+            itemText(icon: "🔥", label: "CPU", value: "\(wholePercent(snapshot.cpu.usage))%", config: config.cpu),
+            itemText(icon: "💾", label: "MEM", value: "\(wholePercent(snapshot.memory.usage))%", config: config.memory),
+            itemText(
+                icon: "🌐", label: "NET",
+                value: "↓\(compactRate(snapshot.network.downBytesPerSec))↑\(compactRate(snapshot.network.upBytesPerSec))",
+                config: config.network
+            ),
+            itemText(icon: "💿", label: "DSK", value: "\(wholePercent(snapshot.disk.usage))%", config: config.disk),
+        ].compactMap { $0.isEmpty ? nil : $0 }
+
+        if parts.isEmpty { return "StatBar" }
+        return parts.joined(separator: " ")
+    }
+
+    private func itemText(icon: String, label: String, value: String, config: MenuBarItemConfig) -> String {
+        guard config.visible else { return "" }
+        switch config.style {
+        case .emoji: return "\(icon) \(value)"
+        case .label: return "\(label) \(value)"
+        case .number: return value
+        }
     }
 
     public func percentText(_ value: Double) -> String {

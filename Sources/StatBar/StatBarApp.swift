@@ -11,13 +11,20 @@ private func loadAvatar() -> NSImage? {
 struct StatBarApp: App {
     @State private var store = MetricsStore()
     @State private var deepseekRefreshing = false
+    @State private var menuBarConfig = MenuBarConfig.load()
     private let formatter = StatBarFormatter()
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarContentView(snapshot: store.snapshot, formatter: formatter, store: store, refreshing: $deepseekRefreshing)
+            MenuBarContentView(
+                snapshot: store.snapshot,
+                formatter: formatter,
+                store: store,
+                refreshing: $deepseekRefreshing,
+                menuBarConfig: $menuBarConfig
+            )
         } label: {
-            let title = formatter.menuTitle(for: store.snapshot)
+            let title = formatter.menuTitle(for: store.snapshot, config: menuBarConfig)
             let isHot = store.snapshot.cpu.usage > 90 || store.snapshot.memory.usage > 90
             Text(title)
                 .foregroundStyle(isHot ? .red : .primary)
@@ -34,6 +41,8 @@ private struct MenuBarContentView: View {
     let formatter: StatBarFormatter
     let store: MetricsStore
     @Binding var refreshing: Bool
+    @Binding var menuBarConfig: MenuBarConfig
+    @State private var showPrefs = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -340,10 +349,78 @@ private struct MenuBarContentView: View {
 
             Spacer()
 
+            Button {
+                showPrefs.toggle()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.callout)
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showPrefs, arrowEdge: .bottom) {
+                preferencesView
+            }
+
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
             .keyboardShortcut("q")
+        }
+    }
+
+    // MARK: - Preferences
+
+    private var preferencesView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Menu Bar Display")
+                .font(.headline)
+
+            prefRow(icon: "🔥", label: "CPU", config: $menuBarConfig.cpu)
+            prefRow(icon: "💾", label: "MEM", config: $menuBarConfig.memory)
+            prefRow(icon: "🌐", label: "NET", config: $menuBarConfig.network)
+            prefRow(icon: "💿", label: "DSK", config: $menuBarConfig.disk)
+
+            Divider()
+
+            Button("Reset to default") {
+                menuBarConfig = MenuBarConfig()
+                menuBarConfig.save()
+            }
+            .font(.caption)
+        }
+        .padding(16)
+        .frame(width: 260)
+    }
+
+    private func prefRow(icon: String, label: String, config: Binding<MenuBarItemConfig>) -> some View {
+        HStack(spacing: 8) {
+            Toggle(isOn: config.visible) {
+                HStack(spacing: 4) {
+                    Text(icon)
+                    Text(label)
+                        .font(.caption)
+                }
+            }
+            .toggleStyle(.checkbox)
+            .frame(width: 80, alignment: .leading)
+
+            Picker("Style", selection: config.style) {
+                ForEach(MenuBarItemStyle.allCases, id: \.self) { style in
+                    Text(styleName(style)).tag(style)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+        }
+        .onChange(of: config.wrappedValue) {
+            menuBarConfig.save()
+        }
+    }
+
+    private func styleName(_ style: MenuBarItemStyle) -> String {
+        switch style {
+        case .emoji: return "🔥"
+        case .label: return "CPU"
+        case .number: return "23"
         }
     }
 }
