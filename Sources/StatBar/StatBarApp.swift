@@ -2,6 +2,11 @@ import AppKit
 import StatBarCore
 import SwiftUI
 
+private func loadAvatar() -> NSImage? {
+    guard let path = Bundle.main.path(forResource: "avatar", ofType: "jpeg") else { return nil }
+    return NSImage(contentsOfFile: path)
+}
+
 @main
 struct StatBarApp: App {
     @State private var store = MetricsStore()
@@ -66,13 +71,42 @@ private struct MenuBarContentView: View {
 
     // MARK: - Header
 
+    private var greeting: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 6..<12: return "早上好"
+        case 12..<14: return "中午好"
+        case 14..<18: return "下午好"
+        case 18..<24: return "晚上好"
+        default: return "夜深了"
+        }
+    }
+
     private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("StatBar")
-                .font(.headline)
-            Text("System monitor")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        HStack(spacing: 10) {
+            if let avatar = loadAvatar() {
+                Image(nsImage: avatar)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 40, height: 40)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(.secondary.opacity(0.2), lineWidth: 1))
+            } else {
+                Circle()
+                    .fill(.secondary.opacity(0.15))
+                    .frame(width: 40, height: 40)
+                    .overlay(Text("陈").font(.headline).foregroundStyle(.secondary))
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(greeting)，陈鹏")
+                    .font(.headline)
+                Text("你的 Mac 此刻状态")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
         }
     }
 
@@ -275,11 +309,20 @@ private struct MenuBarContentView: View {
 
     // MARK: - Footer
 
+    private var buildVersion: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+    }
+
     private var footer: some View {
         HStack {
-            Text("Updated \(formatter.timeText(snapshot.capturedAt))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Updated \(formatter.timeText(snapshot.capturedAt))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Build \(buildVersion)")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
 
             Spacer()
 
