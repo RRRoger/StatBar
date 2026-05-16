@@ -39,7 +39,32 @@ public final class MetricsStore {
         refreshTask = nil
     }
 
+    public func refreshDeepSeek() {
+        let providerCopy = provider
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var p = providerCopy
+            let deepseek = p.refreshDeepSeek()
+            DispatchQueue.main.async {
+                var snap = self?.snapshot ?? SystemSnapshot(
+                    cpu: CPUMetrics(usage: 0),
+                    memory: MemoryMetrics(usedBytes: 0, totalBytes: 0)
+                )
+                snap.deepseek = deepseek
+                self?.snapshot = snap
+                self?.provider = p
+            }
+        }
+    }
+
     public func refresh() {
-        snapshot = provider.snapshot()
+        let providerCopy = provider
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var p = providerCopy
+            let snap = p.snapshot()
+            DispatchQueue.main.async {
+                self?.snapshot = snap
+                self?.provider = p
+            }
+        }
     }
 }

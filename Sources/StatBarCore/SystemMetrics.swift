@@ -24,27 +24,117 @@ public struct MemoryMetrics: Equatable, Sendable {
     }
 }
 
+public struct NetworkMetrics: Equatable, Sendable {
+    public var downBytesPerSec: UInt64
+    public var upBytesPerSec: UInt64
+
+    public init(downBytesPerSec: UInt64, upBytesPerSec: UInt64) {
+        self.downBytesPerSec = downBytesPerSec
+        self.upBytesPerSec = upBytesPerSec
+    }
+}
+
+public struct DiskMetrics: Equatable, Sendable {
+    public var usedBytes: UInt64
+    public var totalBytes: UInt64
+
+    public init(usedBytes: UInt64, totalBytes: UInt64) {
+        self.usedBytes = usedBytes
+        self.totalBytes = totalBytes
+    }
+
+    public var usage: Double {
+        guard totalBytes > 0 else { return 0 }
+        return (Double(usedBytes) / Double(totalBytes) * 100).clampedPercent
+    }
+}
+
+public struct BatteryMetrics: Equatable, Sendable {
+    public var level: Double
+    public var cycleCount: Int
+    public var health: String
+    public var isPresent: Bool
+
+    public init(level: Double, cycleCount: Int, health: String, isPresent: Bool) {
+        self.level = level.clampedPercent
+        self.cycleCount = cycleCount
+        self.health = health
+        self.isPresent = isPresent
+    }
+}
+
+public struct TopProcessInfo: Equatable, Sendable {
+    public var name: String
+    public var cpuPercent: Double
+
+    public init(name: String, cpuPercent: Double) {
+        self.name = name
+        self.cpuPercent = cpuPercent.clampedPercent
+    }
+}
+
+public struct DeepSeekMetrics: Equatable, Sendable {
+    public var totalBalance: Double
+    public var currency: String
+    public var isAvailable: Bool
+    public var loadedAt: Date
+
+    public init(totalBalance: Double = 0, currency: String = "CNY", isAvailable: Bool = false, loadedAt: Date = .distantPast) {
+        self.totalBalance = totalBalance
+        self.currency = currency
+        self.isAvailable = isAvailable
+        self.loadedAt = loadedAt
+    }
+
+    public var formattedBalance: String {
+        String(format: "%.2f", totalBalance)
+    }
+}
+
 public struct SystemSnapshot: Equatable, Sendable {
     public var cpu: CPUMetrics
     public var memory: MemoryMetrics
+    public var network: NetworkMetrics
+    public var disk: DiskMetrics
+    public var battery: BatteryMetrics
+    public var topProcesses: [TopProcessInfo]
+    public var uptime: TimeInterval
+    public var deepseek: DeepSeekMetrics
     public var capturedAt: Date
 
-    public init(cpu: CPUMetrics, memory: MemoryMetrics, capturedAt: Date = Date()) {
+    public init(
+        cpu: CPUMetrics,
+        memory: MemoryMetrics,
+        network: NetworkMetrics = NetworkMetrics(downBytesPerSec: 0, upBytesPerSec: 0),
+        disk: DiskMetrics = DiskMetrics(usedBytes: 0, totalBytes: 0),
+        battery: BatteryMetrics = BatteryMetrics(level: 0, cycleCount: 0, health: "", isPresent: false),
+        topProcesses: [TopProcessInfo] = [],
+        uptime: TimeInterval = 0,
+        deepseek: DeepSeekMetrics = DeepSeekMetrics(),
+        capturedAt: Date = Date()
+    ) {
         self.cpu = cpu
         self.memory = memory
+        self.network = network
+        self.disk = disk
+        self.battery = battery
+        self.topProcesses = topProcesses
+        self.uptime = uptime
+        self.deepseek = deepseek
         self.capturedAt = capturedAt
     }
 }
 
 public protocol SystemMetricsProviding: Sendable {
     mutating func snapshot() -> SystemSnapshot
+    mutating func refreshDeepSeek() -> DeepSeekMetrics
 }
 
 public struct StatBarFormatter: Sendable {
     public init() {}
 
     public func menuTitle(for snapshot: SystemSnapshot) -> String {
-        "C \(wholePercent(snapshot.cpu.usage))% M \(wholePercent(snapshot.memory.usage))%"
+        "🔥\(wholePercent(snapshot.cpu.usage))% 💾\(wholePercent(snapshot.memory.usage))% 🌐↓\(compactRate(snapshot.network.downBytesPerSec))↑\(compactRate(snapshot.network.upBytesPerSec)) 💿\(wholePercent(snapshot.disk.usage))%"
     }
 
     public func percentText(_ value: Double) -> String {
@@ -64,8 +154,37 @@ public struct StatBarFormatter: Sendable {
         date.formatted(date: .omitted, time: .standard)
     }
 
+    public func networkRateText(_ bytesPerSec: UInt64) -> String {
+        if bytesPerSec >= 1_000_000 {
+            String(format: "%.1f MB/s", Double(bytesPerSec) / 1_000_000)
+        } else {
+            String(format: "%.0f KB/s", Double(bytesPerSec) / 1_000)
+        }
+    }
+
+    public func uptimeText(_ uptime: TimeInterval) -> String {
+        let totalSeconds = Int(uptime)
+        let days = totalSeconds / 86_400
+        let hours = (totalSeconds % 86_400) / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        if days > 0 {
+            return "\(days)d \(hours):\(String(format: "%02d", minutes))"
+        }
+        return "\(hours):\(String(format: "%02d", minutes))"
+    }
+
     private func wholePercent(_ value: Double) -> Int {
         Int(value.clampedPercent.rounded())
+    }
+
+    private func compactRate(_ bytesPerSec: UInt64) -> String {
+        if bytesPerSec >= 1_000_000 {
+            String(format: "%.1fM", Double(bytesPerSec) / 1_000_000)
+        } else if bytesPerSec >= 1_000 {
+            String(format: "%.0fK", Double(bytesPerSec) / 1_000)
+        } else {
+            "0"
+        }
     }
 }
 
@@ -101,6 +220,12 @@ public struct CPUUsageCalculator: Sendable {
 public struct MacSystemMetricsProvider: SystemMetricsProviding {
     private var previousCPU: CPUTickSample?
     private let calculator = CPUUsageCalculator()
+    private var networkProvider = NetworkRateProvider()
+    private let diskProvider = DiskInfoProvider()
+    private let batteryProvider = BatteryInfoProvider()
+    private let uptimeProvider = SystemUptimeProvider()
+    private let topProcessesProvider = TopProcessesProvider()
+    private var deepseekProvider = DeepSeekBalanceProvider()
 
     public init() {}
 
@@ -121,8 +246,18 @@ public struct MacSystemMetricsProvider: SystemMetricsProviding {
         return SystemSnapshot(
             cpu: CPUMetrics(usage: cpuUsage),
             memory: readMemory(),
+            network: networkProvider.snapshot(),
+            disk: diskProvider.snapshot(),
+            battery: batteryProvider.snapshot(),
+            topProcesses: topProcessesProvider.snapshot(),
+            uptime: uptimeProvider.uptime(),
+            deepseek: deepseekProvider.snapshot(),
             capturedAt: Date()
         )
+    }
+
+    public mutating func refreshDeepSeek() -> DeepSeekMetrics {
+        deepseekProvider.forceRefresh()
     }
 
     private func readCPUSample() -> CPUTickSample? {

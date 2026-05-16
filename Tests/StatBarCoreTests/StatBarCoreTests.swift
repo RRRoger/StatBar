@@ -8,7 +8,7 @@ import Testing
         memory: MemoryMetrics(usedBytes: 65, totalBytes: 100)
     )
 
-    #expect(StatBarFormatter().menuTitle(for: snapshot) == "C 23% M 65%")
+    #expect(StatBarFormatter().menuTitle(for: snapshot) == "🔥23% 💾65% 🌐↓0↑0 💿0%")
 }
 
 @Test func percentValuesAreClamped() {
@@ -48,4 +48,152 @@ import Testing
 
     #expect(text.contains("1"))
     #expect(text.localizedCaseInsensitiveContains("GB"))
+}
+
+// MARK: - Emoji menu title
+
+@Test func menuTitleUsesEmojiFormat() {
+    let snapshot = SystemSnapshot(
+        cpu: CPUMetrics(usage: 23),
+        memory: MemoryMetrics(usedBytes: 12_000_000_000, totalBytes: 24_000_000_000),
+        network: NetworkMetrics(downBytesPerSec: 1_200_000, upBytesPerSec: 300_000),
+        disk: DiskMetrics(usedBytes: 210_000_000_000, totalBytes: 500_000_000_000),
+        capturedAt: Date()
+    )
+
+    let title = StatBarFormatter().menuTitle(for: snapshot)
+    #expect(title.contains("🔥"))
+    #expect(title.contains("23%"))
+    #expect(title.contains("💾"))
+    #expect(title.contains("50%"))
+}
+
+// MARK: - NetworkMetrics
+
+@Test func networkMetricsStoresRates() {
+    let net = NetworkMetrics(downBytesPerSec: 1_500_000, upBytesPerSec: 500_000)
+    #expect(net.downBytesPerSec == 1_500_000)
+    #expect(net.upBytesPerSec == 500_000)
+}
+
+@Test func networkRateFormatterShowsMBPerSec() {
+    let text = StatBarFormatter().networkRateText(1_500_000)
+    #expect(text.contains("1.5"))
+    #expect(text.localizedCaseInsensitiveContains("MB"))
+}
+
+@Test func networkRateFormatterShowsKBPerSec() {
+    let text = StatBarFormatter().networkRateText(500_000)
+    #expect(text.localizedCaseInsensitiveContains("KB"))
+}
+
+// MARK: - DiskMetrics
+
+@Test func diskMetricsUsagePercent() {
+    let disk = DiskMetrics(usedBytes: 250_000_000_000, totalBytes: 500_000_000_000)
+    #expect(disk.usage == 50)
+}
+
+@Test func diskMetricsHandlesZeroTotal() {
+    let disk = DiskMetrics(usedBytes: 100, totalBytes: 0)
+    #expect(disk.usage == 0)
+}
+
+// MARK: - BatteryMetrics
+
+@Test func batteryMetricsReportsPresence() {
+    let present = BatteryMetrics(level: 85, cycleCount: 100, health: "Good", isPresent: true)
+    #expect(present.isPresent)
+    let absent = BatteryMetrics(level: 0, cycleCount: 0, health: "", isPresent: false)
+    #expect(!absent.isPresent)
+}
+
+@Test func batteryLevelClamped() {
+    #expect(BatteryMetrics(level: -5, cycleCount: 0, health: "", isPresent: true).level == 0)
+    #expect(BatteryMetrics(level: 110, cycleCount: 0, health: "", isPresent: true).level == 100)
+}
+
+// MARK: - Uptime formatting
+
+@Test func uptimeFormatterShowsReadableDuration() {
+    // 3 days + 12 hours + 34 minutes in seconds
+    let uptime: TimeInterval = 3 * 86_400 + 12 * 3_600 + 34 * 60
+    let text = StatBarFormatter().uptimeText(uptime)
+    #expect(text.contains("3"))
+    #expect(text.contains("d"))
+}
+
+// MARK: - UptimeProvider
+
+@Test func uptimeProviderReturnsNonNegativeValue() {
+    var provider = SystemUptimeProvider()
+    let uptime = provider.uptime()
+    #expect(uptime >= 0)
+}
+
+// MARK: - DiskInfoProvider
+
+@Test func diskInfoProviderReturnsRootVolumeData() {
+    var provider = DiskInfoProvider()
+    let disk = provider.snapshot()
+    #expect(disk.totalBytes > 0)
+    #expect(disk.usage >= 0)
+    #expect(disk.usage <= 100)
+}
+
+// MARK: - NetworkRateProvider
+
+@Test func networkRateProviderReturnsNonNegativeRates() {
+    var provider = NetworkRateProvider()
+    let net = provider.snapshot()
+    #expect(net.downBytesPerSec >= 0)
+    #expect(net.upBytesPerSec >= 0)
+}
+
+// MARK: - TopProcessesProvider
+
+@Test func topProcessesProviderReturnsAtMostFiveProcesses() {
+    var provider = TopProcessesProvider()
+    let processes = provider.snapshot()
+    #expect(processes.count <= 5)
+    for process in processes {
+        #expect(!process.name.isEmpty)
+        #expect(process.cpuPercent >= 0)
+    }
+}
+
+// MARK: - BatteryInfoProvider
+
+@Test func batteryInfoProviderReturnsPresenceFlag() {
+    var provider = BatteryInfoProvider()
+    let battery = provider.snapshot()
+    // Either present with valid data, or absent
+    if battery.isPresent {
+        #expect(battery.level >= 0)
+        #expect(battery.level <= 100)
+    } else {
+        #expect(battery.level == 0)
+    }
+}
+
+// MARK: - DeepSeek Metrics
+
+@Test func deepseekMetricsFormatsBalance() {
+    let metrics = DeepSeekMetrics(totalBalance: 54.69, currency: "CNY", isAvailable: true)
+    #expect(metrics.formattedBalance == "54.69")
+}
+
+@Test func deepseekMetricsDefaultIsUnavailable() {
+    let metrics = DeepSeekMetrics()
+    #expect(!metrics.isAvailable)
+    #expect(metrics.totalBalance == 0)
+    #expect(metrics.formattedBalance == "0.00")
+}
+
+@Test func deepseekMetricsEquatable() {
+    let a = DeepSeekMetrics(totalBalance: 10.0, currency: "CNY", isAvailable: true)
+    let b = DeepSeekMetrics(totalBalance: 10.0, currency: "CNY", isAvailable: true)
+    let c = DeepSeekMetrics(totalBalance: 20.0, currency: "CNY", isAvailable: true)
+    #expect(a == b)
+    #expect(a != c)
 }
