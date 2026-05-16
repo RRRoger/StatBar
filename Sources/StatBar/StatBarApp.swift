@@ -88,14 +88,14 @@ private struct MenuBarContentView: View {
                 Image(nsImage: avatar)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 40, height: 40)
+                    .frame(width: 56, height: 56)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(.secondary.opacity(0.2), lineWidth: 1))
             } else {
                 Circle()
                     .fill(.secondary.opacity(0.15))
-                    .frame(width: 40, height: 40)
-                    .overlay(Text("陈").font(.headline).foregroundStyle(.secondary))
+                    .frame(width: 56, height: 56)
+                    .overlay(Text("陈").font(.title2).foregroundStyle(.secondary))
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -309,17 +309,31 @@ private struct MenuBarContentView: View {
 
     // MARK: - Footer
 
-    private var buildVersion: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+    private var versionString: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "0"
+        let build = info?["CFBundleVersion"] as? String ?? "0"
+        return "v\(short) (\(build))"
     }
 
     private var footer: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Image(systemName: "link")
+                        .font(.system(size: 9))
+                    Button("github.com/RRRoger/StatBar") {
+                        if let url = URL(string: "https://github.com/RRRoger/StatBar") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.link)
+                    .font(.system(size: 10))
+                }
                 Text("Updated \(formatter.timeText(snapshot.capturedAt))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("Build \(buildVersion)")
+                Text(versionString)
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
             }
