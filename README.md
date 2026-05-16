@@ -17,3 +17,23 @@ Mac 状态栏系统监控工具，在菜单栏显示 CPU、内存等关键指标
 
 - macOS 15+
 - Xcode 16+
+
+## 本地运行
+
+```bash
+# 运行核心测试
+swift test
+
+# SwiftPM 构建
+swift build
+
+# 无 Xcode 打包成 .app
+./scripts/build-app.sh
+open .build/StatBar.app
+
+# 使用完整 Xcode 时构建/测试 App
+xcodebuild -project StatBar.xcodeproj -scheme StatBar build
+xcodebuild -project StatBar.xcodeproj -scheme StatBar test
+```
+
+也可以直接打开 `StatBar.xcodeproj`，选择 `StatBar` scheme 运行。运行后菜单栏会显示类似 `C 23% M 58%` 的实时摘要，点击后展开详情面板。
