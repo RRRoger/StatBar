@@ -25,12 +25,18 @@ mkdir -p "$MACOS_DIR"
 
 install -m 755 "$EXECUTABLE_PATH" "$MACOS_DIR/$APP_NAME"
 
-# Copy avatar to Resources
+# Copy resources
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 mkdir -p "$RESOURCES_DIR"
+
 AVATAR_SRC="$ROOT_DIR/Resources/avatar.jpeg"
 if [ -f "$AVATAR_SRC" ]; then
     cp "$AVATAR_SRC" "$RESOURCES_DIR/"
+fi
+
+ICON_SRC="$ROOT_DIR/Resources/AppIcon.icns"
+if [ -f "$ICON_SRC" ]; then
+    cp "$ICON_SRC" "$RESOURCES_DIR/"
 fi
 
 sed \
