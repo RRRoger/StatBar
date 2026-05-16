@@ -2,6 +2,18 @@
 
 All notable changes to StatBar will be documented in this file.
 
+## [1.1.0] — 2026-05-16
+
+### Added
+- Customizable menu bar display: show/hide each metric independently
+- Per-item display style: emoji, text label, or number only
+- Preferences popover panel accessible via gear icon in dropdown
+- Fallback to "StatBar" when all items hidden
+- App icon from avatar (AppIcon.icns)
+
+### Changed
+- Menu bar format now uses space between emoji and value (e.g. `🔥 23%`)
+
 ## [1.0.0] — 2026-05-16
 
 ### Added
