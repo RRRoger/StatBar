@@ -235,6 +235,81 @@ import Testing
     #expect(decoded.disk.visible == true)
 }
 
+// MARK: - StatBarSettings
+
+@Test func statBarSettingsDefaultsMatchCurrentAppBehavior() {
+    let settings = StatBarSettings()
+
+    #expect(settings.menuBar == MenuBarConfig())
+    #expect(settings.refresh.mode == .standard)
+    #expect(settings.refresh.interval == .seconds(2))
+    #expect(settings.alerts.cpuHighUsagePercent == 90)
+    #expect(settings.alerts.memoryHighUsagePercent == 90)
+    #expect(settings.alerts.diskHighUsagePercent == 90)
+    #expect(settings.alerts.deepSeekLowBalance == 10)
+    #expect(settings.profile.displayName == "陈鹏")
+    #expect(settings.profile.subtitle == "你的 Mac 此刻状态")
+}
+
+@Test func statBarSettingsRoundTripCodable() throws {
+    var settings = StatBarSettings()
+    settings.menuBar.cpu.visible = false
+    settings.refresh.mode = .highFrequency
+    settings.alerts.cpuHighUsagePercent = 75
+    settings.alerts.deepSeekLowBalance = 3.5
+    settings.profile.displayName = "Roger"
+    settings.profile.subtitle = "Mac dashboard"
+
+    let data = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(StatBarSettings.self, from: data)
+
+    #expect(decoded == settings)
+    #expect(decoded.refresh.interval == .seconds(1))
+}
+
+@Test func refreshModeMapsToIntervals() {
+    #expect(RefreshMode.lowPower.interval == .seconds(5))
+    #expect(RefreshMode.standard.interval == .seconds(2))
+    #expect(RefreshMode.highFrequency.interval == .seconds(1))
+}
+
+@Test func alertSettingsClampValues() {
+    var alerts = AlertSettings(
+        cpuHighUsagePercent: -10,
+        memoryHighUsagePercent: 150,
+        diskHighUsagePercent: 101,
+        deepSeekLowBalance: -2
+    )
+
+    #expect(alerts.cpuHighUsagePercent == 0)
+    #expect(alerts.memoryHighUsagePercent == 100)
+    #expect(alerts.diskHighUsagePercent == 100)
+    #expect(alerts.deepSeekLowBalance == 0)
+
+    alerts.cpuHighUsagePercent = 101
+    alerts.memoryHighUsagePercent = -1
+    alerts.diskHighUsagePercent = 42
+    alerts.deepSeekLowBalance = -10
+
+    #expect(alerts.cpuHighUsagePercent == 100)
+    #expect(alerts.memoryHighUsagePercent == 0)
+    #expect(alerts.diskHighUsagePercent == 42)
+    #expect(alerts.deepSeekLowBalance == 0)
+}
+
+@Test func profileSettingsFallbackForEmptyText() {
+    var profile = ProfileSettings(displayName: "   ", subtitle: "")
+
+    #expect(profile.displayName == "陈鹏")
+    #expect(profile.subtitle == "你的 Mac 此刻状态")
+
+    profile.displayName = ""
+    profile.subtitle = "   "
+
+    #expect(profile.displayName == "陈鹏")
+    #expect(profile.subtitle == "你的 Mac 此刻状态")
+}
+
 // MARK: - Config-aware menu title
 
 @Test func menuTitleHidesItemsWhenNotVisible() {

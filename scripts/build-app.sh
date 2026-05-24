@@ -45,7 +45,7 @@ sed \
   -e "s/\$(PRODUCT_BUNDLE_IDENTIFIER)/com.chenpeng.StatBar/g" \
   -e "s/\$(PRODUCT_NAME)/$APP_NAME/g" \
   -e "s/\$(PRODUCT_BUNDLE_PACKAGE_TYPE)/APPL/g" \
-  -e "s/\$(BUILD_VERSION)/$BUILD_VERSION/g" \
+  -e "s/\$(BUILD_VERSION)/$NEW_VERSION/g" \
   "$ROOT_DIR/StatBar/Info.plist" > "$CONTENTS_DIR/Info.plist"
 
 if command -v codesign >/dev/null 2>&1; then

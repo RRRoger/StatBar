@@ -2,6 +2,23 @@
 
 All notable changes to StatBar will be documented in this file.
 
+## [1.2.0] — 2026-05-24
+
+### Added
+- Native macOS Settings window opened from the dropdown gear button
+- Unified app settings for menu bar display, refresh mode, alert thresholds, and profile text
+- Refresh modes: Low Power (5s), Standard (2s), and High Frequency (1s)
+- Configurable CPU, memory, disk, and DeepSeek alert thresholds
+- Configurable dropdown display name and subtitle
+
+### Changed
+- Moved menu bar display controls from a popover into the Settings window
+- CPU and memory hot-state coloring now use configurable thresholds
+
+### Fixed
+- Preserve existing menu bar display preferences when migrating to unified settings
+- Use the incremented build number in packaged app metadata
+
 ## [1.1.0] — 2026-05-16
 
 ### Added

@@ -9,10 +9,16 @@ private func loadAvatar() -> NSImage? {
 
 @main
 struct StatBarApp: App {
-    @State private var store = MetricsStore()
+    @State private var store: MetricsStore
     @State private var deepseekRefreshing = false
-    @State private var menuBarConfig = MenuBarConfig.load()
+    @State private var settings: StatBarSettings
     private let formatter = StatBarFormatter()
+
+    init() {
+        let loadedSettings = StatBarSettings.load()
+        _settings = State(initialValue: loadedSettings)
+        _store = State(initialValue: MetricsStore(refreshInterval: loadedSettings.refresh.interval))
+    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -21,11 +27,12 @@ struct StatBarApp: App {
                 formatter: formatter,
                 store: store,
                 refreshing: $deepseekRefreshing,
-                menuBarConfig: $menuBarConfig
+                settings: $settings
             )
         } label: {
-            let title = formatter.menuTitle(for: store.snapshot, config: menuBarConfig)
-            let isHot = store.snapshot.cpu.usage > 90 || store.snapshot.memory.usage > 90
+            let title = formatter.menuTitle(for: store.snapshot, config: settings.menuBar)
+            let isHot = store.snapshot.cpu.usage > settings.alerts.cpuHighUsagePercent ||
+                store.snapshot.memory.usage > settings.alerts.memoryHighUsagePercent
             Text(title)
                 .foregroundStyle(isHot ? .red : .primary)
                 .task {
@@ -33,6 +40,14 @@ struct StatBarApp: App {
                 }
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView(settings: $settings)
+                .onChange(of: settings) {
+                    settings.save()
+                    store.updateRefreshInterval(settings.refresh.interval)
+                }
+        }
     }
 }
 
@@ -41,8 +56,8 @@ private struct MenuBarContentView: View {
     let formatter: StatBarFormatter
     let store: MetricsStore
     @Binding var refreshing: Bool
-    @Binding var menuBarConfig: MenuBarConfig
-    @State private var showPrefs = false
+    @Binding var settings: StatBarSettings
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -108,9 +123,9 @@ private struct MenuBarContentView: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(greeting)，陈鹏")
+                Text("\(greeting)，\(settings.profile.displayName)")
                     .font(.headline)
-                Text("你的 Mac 此刻状态")
+                Text(settings.profile.subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -350,15 +365,12 @@ private struct MenuBarContentView: View {
             Spacer()
 
             Button {
-                showPrefs.toggle()
+                openSettings()
             } label: {
                 Image(systemName: "gearshape")
                     .font(.callout)
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $showPrefs, arrowEdge: .bottom) {
-                preferencesView
-            }
 
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
@@ -366,42 +378,62 @@ private struct MenuBarContentView: View {
             .keyboardShortcut("q")
         }
     }
+}
 
-    // MARK: - Preferences
+// MARK: - Settings Window
 
-    private var preferencesView: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Menu Bar Display")
-                .font(.headline)
+private struct SettingsView: View {
+    @Binding var settings: StatBarSettings
 
-            prefRow(icon: "🔥", label: "CPU", config: $menuBarConfig.cpu)
-            prefRow(icon: "💾", label: "MEM", config: $menuBarConfig.memory)
-            prefRow(icon: "🌐", label: "NET", config: $menuBarConfig.network)
-            prefRow(icon: "💿", label: "DSK", config: $menuBarConfig.disk)
+    var body: some View {
+        Form {
+            Section("Menu Bar") {
+                menuBarRow(icon: "🔥", label: "CPU", config: $settings.menuBar.cpu)
+                menuBarRow(icon: "💾", label: "Memory", config: $settings.menuBar.memory)
+                menuBarRow(icon: "🌐", label: "Network", config: $settings.menuBar.network)
+                menuBarRow(icon: "💿", label: "Disk", config: $settings.menuBar.disk)
 
-            Divider()
-
-            Button("Reset to default") {
-                menuBarConfig = MenuBarConfig()
-                menuBarConfig.save()
+                Button("Reset Menu Bar") {
+                    settings.menuBar = MenuBarConfig()
+                }
             }
-            .font(.caption)
+
+            Section("Refresh") {
+                Picker("Refresh Mode", selection: $settings.refresh.mode) {
+                    Text("Low Power (5s)").tag(RefreshMode.lowPower)
+                    Text("Standard (2s)").tag(RefreshMode.standard)
+                    Text("High Frequency (1s)").tag(RefreshMode.highFrequency)
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Section("Alerts") {
+                thresholdField("CPU High Usage", value: $settings.alerts.cpuHighUsagePercent, suffix: "%")
+                thresholdField("Memory High Usage", value: $settings.alerts.memoryHighUsagePercent, suffix: "%")
+                thresholdField("Disk High Usage", value: $settings.alerts.diskHighUsagePercent, suffix: "%")
+                thresholdField("DeepSeek Low Balance", value: $settings.alerts.deepSeekLowBalance, suffix: "CNY")
+            }
+
+            Section("Profile") {
+                TextField("Display Name", text: $settings.profile.displayName)
+                TextField("Subtitle", text: $settings.profile.subtitle)
+            }
         }
-        .padding(16)
-        .frame(width: 260)
+        .formStyle(.grouped)
+        .padding(20)
+        .frame(width: 460)
     }
 
-    private func prefRow(icon: String, label: String, config: Binding<MenuBarItemConfig>) -> some View {
+    private func menuBarRow(icon: String, label: String, config: Binding<MenuBarItemConfig>) -> some View {
         HStack(spacing: 8) {
             Toggle(isOn: config.visible) {
                 HStack(spacing: 4) {
                     Text(icon)
                     Text(label)
-                        .font(.caption)
                 }
             }
             .toggleStyle(.checkbox)
-            .frame(width: 80, alignment: .leading)
+            .frame(width: 120, alignment: .leading)
 
             Picker("Style", selection: config.style) {
                 ForEach(MenuBarItemStyle.allCases, id: \.self) { style in
@@ -411,9 +443,6 @@ private struct MenuBarContentView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
         }
-        .onChange(of: config.wrappedValue) {
-            menuBarConfig.save()
-        }
     }
 
     private func styleName(_ style: MenuBarItemStyle) -> String {
@@ -421,6 +450,19 @@ private struct MenuBarContentView: View {
         case .emoji: return "🔥"
         case .label: return "CPU"
         case .number: return "23"
+        }
+    }
+
+    private func thresholdField(_ title: String, value: Binding<Double>, suffix: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            TextField(title, value: value, format: .number.precision(.fractionLength(0...2)))
+                .multilineTextAlignment(.trailing)
+                .frame(width: 76)
+            Text(suffix)
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .leading)
         }
     }
 }

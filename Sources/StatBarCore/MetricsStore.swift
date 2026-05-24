@@ -8,7 +8,8 @@ public final class MetricsStore {
 
     private var provider: any SystemMetricsProviding
     private var refreshTask: Task<Void, Never>?
-    private let refreshInterval: Duration
+    private var refreshInterval: Duration
+    private var isRunning = false
 
     public init(
         provider: any SystemMetricsProviding = MacSystemMetricsProvider(),
@@ -23,6 +24,7 @@ public final class MetricsStore {
     }
 
     public func start() {
+        isRunning = true
         refresh()
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
@@ -35,8 +37,17 @@ public final class MetricsStore {
     }
 
     public func stop() {
+        isRunning = false
         refreshTask?.cancel()
         refreshTask = nil
+    }
+
+    public func updateRefreshInterval(_ interval: Duration) {
+        guard refreshInterval != interval else { return }
+        refreshInterval = interval
+        if isRunning {
+            start()
+        }
     }
 
     public func refreshDeepSeek() {
