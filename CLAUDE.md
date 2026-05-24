@@ -101,3 +101,21 @@ Resources/avatar.jpeg               — User avatar, copied to .app/Contents/Res
 - `StatBarFormatter.menuTitle(for:)` must stay length-constrained for menu bar.
 - Tests use Swift Testing (`@Test`, `#expect`). Add tests for pure logic (formatters, calculators, metrics models) before changing them.
 - Do not commit `.build/`, `.swiftpm/`, `.vscode/`, Xcode user data, or files containing API keys.
+
+## Skill routing
+
+When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
+
+Key routing rules:
+- Product ideas/brainstorming → invoke /office-hours
+- Strategy/scope → invoke /plan-ceo-review
+- Architecture → invoke /plan-eng-review
+- Design system/plan review → invoke /design-consultation or /plan-design-review
+- Full review pipeline → invoke /autoplan
+- Bugs/errors → invoke /investigate
+- QA/testing site behavior → invoke /qa or /qa-only
+- Code review/diff check → invoke /review
+- Visual polish → invoke /design-review
+- Ship/deploy/PR → invoke /ship or /land-and-deploy
+- Save progress → invoke /context-save
+- Resume context → invoke /context-restore
