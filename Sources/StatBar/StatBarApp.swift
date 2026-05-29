@@ -1,4 +1,6 @@
 import AppKit
+import Observation
+import QuartzCore
 import StatBarCore
 import SwiftUI
 
@@ -7,49 +9,380 @@ private func loadAvatar() -> NSImage? {
     return NSImage(contentsOfFile: path)
 }
 
-@main
-struct StatBarApp: App {
-    @State private var store: MetricsStore
-    @State private var deepseekRefreshing = false
-    @State private var settings: StatBarSettings
-    private let formatter = StatBarFormatter()
+// MARK: - Dynamic Island Panel Helper
 
-    init() {
-        let loadedSettings = StatBarSettings.load()
-        _settings = State(initialValue: loadedSettings)
-        _store = State(initialValue: MetricsStore(refreshInterval: loadedSettings.refresh.interval))
+private enum IslandLayout {
+    static let compactSize = NSSize(width: 320, height: 42)
+    static let expandedSize = NSSize(width: 420, height: 800)
+    static let topInset: CGFloat = 8
+}
+
+@MainActor
+private func makeIslandPanel() -> NSPanel {
+    let panel = NSPanel(
+        contentRect: NSRect(origin: .zero, size: IslandLayout.compactSize),
+        styleMask: [.borderless, .nonactivatingPanel],
+        backing: .buffered,
+        defer: false
+    )
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = false
+    panel.level = .statusBar
+    panel.hidesOnDeactivate = false
+    panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+    panel.isMovableByWindowBackground = false
+    return panel
+}
+
+// MARK: - App Delegate
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
+    @Published var settings: StatBarSettings
+    let store: MetricsStore
+    private let formatter = StatBarFormatter()
+    private var islandPanel: NSPanel?
+    private var islandController: NSHostingController<IslandRootView>?
+    private var isIslandExpanded = false
+    private var mouseMonitor: Any?
+    private var settingsWindowController: NSWindowController?
+
+    override init() {
+        let s = StatBarSettings.load()
+        settings = s
+        store = MetricsStore(refreshInterval: s.refresh.interval)
+        super.init()
     }
 
-    var body: some Scene {
-        MenuBarExtra {
-            MenuBarContentView(
-                snapshot: store.snapshot,
-                formatter: formatter,
-                store: store,
-                refreshing: $deepseekRefreshing,
-                settings: $settings
-            )
-        } label: {
-            let title = formatter.menuTitle(for: store.snapshot, config: settings.menuBar)
-            let isHot = store.snapshot.cpu.usage > settings.alerts.cpuHighUsagePercent ||
-                store.snapshot.memory.usage > settings.alerts.memoryHighUsagePercent
-            Text(title)
-                .foregroundStyle(isHot ? .red : .primary)
-                .task {
-                    store.start()
-                }
-        }
-        .menuBarExtraStyle(.window)
+    func applicationDidFinishLaunching(_ aNotification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        setupIslandPanel()
+        observeStore()
+        store.start()
+    }
 
-        Settings {
-            SettingsView(settings: $settings)
-                .onChange(of: settings) {
-                    settings.save()
-                    store.updateRefreshInterval(settings.refresh.interval)
+    func applicationWillTerminate(_ aNotification: Notification) {
+        store.stop()
+        if let mouseMonitor {
+            NSEvent.removeMonitor(mouseMonitor)
+        }
+    }
+
+    func onSettingsChanged() {
+        settings.save()
+        store.updateRefreshInterval(settings.refresh.interval)
+        updateIslandPanel()
+    }
+
+    func showSettings() {
+        if let wc = settingsWindowController, wc.window?.isVisible == true {
+            wc.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let binding = Binding(
+            get: { [weak self] in self?.settings ?? StatBarSettings() },
+            set: { [weak self] in self?.settings = $0; self?.onSettingsChanged() }
+        )
+        let view = SettingsView(settings: binding)
+        let hosting = NSHostingController(rootView: view)
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "StatBar Settings"
+        window.styleMask = [.titled, .closable]
+        window.setContentSize(NSSize(width: 560, height: 500))
+        window.center()
+
+        let wc = NSWindowController(window: window)
+        wc.showWindow(nil)
+        settingsWindowController = wc
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Dynamic Island
+
+    private func setupIslandPanel() {
+        let panel = makeIslandPanel()
+        islandPanel = panel
+
+        let controller = NSHostingController(rootView: makeIslandView())
+        controller.view.appearance = NSAppearance(named: .darkAqua)
+        islandController = controller
+        panel.contentViewController = controller
+
+        positionIslandPanel(animated: false)
+        panel.orderFront(nil)
+
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.collapseIsland()
+            }
+        }
+    }
+
+    private func makeIslandView() -> IslandRootView {
+        IslandRootView(
+            snapshot: store.snapshot,
+            store: store,
+            formatter: formatter,
+            settings: Binding(
+                get: { [weak self] in self?.settings ?? StatBarSettings() },
+                set: { [weak self] in
+                    self?.settings = $0
+                    self?.onSettingsChanged()
                 }
+            ),
+            isExpanded: isIslandExpanded,
+            toggleExpanded: { [weak self] in self?.toggleIsland() },
+            collapse: { [weak self] in self?.collapseIsland() },
+            showSettings: { [weak self] in self?.showSettings() }
+        )
+    }
+
+    private func updateIslandPanel() {
+        islandController?.rootView = makeIslandView()
+    }
+
+    private var targetIslandSize: NSSize {
+        isIslandExpanded ? IslandLayout.expandedSize : IslandLayout.compactSize
+    }
+
+    private func toggleIsland() {
+        isIslandExpanded.toggle()
+        updateIslandPanel()
+        positionIslandPanel(animated: true)
+    }
+
+    private func collapseIsland() {
+        guard isIslandExpanded else { return }
+        isIslandExpanded = false
+        updateIslandPanel()
+        positionIslandPanel(animated: true)
+    }
+
+    private func positionIslandPanel(animated: Bool) {
+        guard let panel = islandPanel else { return }
+        // Use the screen under the mouse cursor, fallback to main, then first
+        let mouseLocation = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) })
+                ?? NSScreen.main
+                ?? NSScreen.screens.first else { return }
+
+        let size = targetIslandSize
+        let sf = screen.frame
+        let frame = NSRect(
+            x: sf.origin.x + (sf.width - size.width) / 2,
+            y: sf.maxY - size.height - IslandLayout.topInset,
+            width: size.width,
+            height: size.height
+        )
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+        }
+    }
+
+    // MARK: - Store Observation
+
+    private func observeStore() {
+        withObservationTracking {
+            let _ = store.snapshot
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.updateIslandPanel()
+                self?.observeStore()
+            }
         }
     }
 }
+
+// MARK: - SwiftUI App
+
+@main
+struct StatBarApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+    var body: some Scene {
+        Settings { EmptyView() }
+    }
+}
+
+// MARK: - Island Root
+
+private struct IslandRootView: View {
+    let snapshot: SystemSnapshot
+    let store: MetricsStore
+    let formatter: StatBarFormatter
+    @Binding var settings: StatBarSettings
+    let isExpanded: Bool
+    var toggleExpanded: () -> Void
+    var collapse: () -> Void
+    var showSettings: () -> Void
+    @State private var deepseekRefreshing = false
+
+    var body: some View {
+        Group {
+            if isExpanded {
+                expandedIsland
+            } else {
+                compactIsland
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: isExpanded)
+    }
+
+    private var compactIsland: some View {
+        Button(action: toggleExpanded) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(isHot ? Color.red : Color.green)
+                    .frame(width: 8, height: 8)
+                Text(formatter.islandSummaryTitle(for: snapshot, config: settings.menuBar))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 0)
+                if snapshot.audio.isActive {
+                    AudioWaveformView(data: snapshot.audio.waveformData)
+                        .frame(width: 40, height: 20)
+                }
+                if snapshot.video.isPlaying {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.blue)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .frame(width: IslandLayout.compactSize.width, height: IslandLayout.compactSize.height)
+            .background(.black.opacity(0.92))
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.08), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var expandedIsland: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(isHot ? Color.red : Color.green)
+                    .frame(width: 8, height: 8)
+                Text(formatter.islandSummaryTitle(for: snapshot, config: settings.menuBar))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Spacer()
+                Button(action: showSettings) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                Button(action: collapse) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.top, 14)
+            .padding(.bottom, 2)
+
+            ScrollView {
+                MenuBarContentView(
+                snapshot: snapshot,
+                formatter: formatter,
+                store: store,
+                refreshing: $deepseekRefreshing,
+                settings: $settings,
+                showSettings: showSettings
+            )
+            .foregroundStyle(.white)
+            }
+        }
+        .frame(width: IslandLayout.expandedSize.width, height: IslandLayout.expandedSize.height)
+        .background(.black.opacity(0.94))
+        .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 34, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private var isHot: Bool {
+        snapshot.cpu.usage > settings.alerts.cpuHighUsagePercent ||
+            snapshot.memory.usage > settings.alerts.memoryHighUsagePercent
+    }
+}
+
+// MARK: - Audio Waveform View
+
+private struct AudioWaveformView: View {
+    let data: [Float]
+
+    // Fixed random phases per bar so they move independently
+    private static let phases: [Double] = (0..<12).map { _ in Double.random(in: 0...(2 * .pi)) }
+    private static let speeds: [Double] = (0..<12).map { _ in Double.random(in: 1.5...3.5) }
+    private static let amplitudes: [Double] = (0..<12).map { _ in Double.random(in: 0.12...0.35) }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.016)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            Canvas { context, size in
+                let barCount = 12
+                let barWidth: CGFloat = 2.5
+                let spacing: CGFloat = 1.0
+                let totalWidth = CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * spacing
+                let startX = (size.width - totalWidth) / 2
+                let minH: CGFloat = 2
+                let maxH = size.height
+
+                for i in 0..<barCount {
+                    let level = i < data.count ? CGFloat(data[i]) : 0
+
+                    // When silent: each bar oscillates independently
+                    let silent = level < 0.02
+                    let wave = silent
+                        ? CGFloat(Self.amplitudes[i]) * CGFloat(sin(t * Self.speeds[i] + Self.phases[i])) + 0.18
+                        : level
+
+                    // Mirror effect: bars near center are slightly taller
+                    let center = CGFloat(barCount - 1) / 2
+                    let dist = abs(CGFloat(i) - center) / center
+                    let centerBoost = silent ? (1.0 - dist * 0.3) : 1.0
+
+                    let h = minH + max(0, wave * centerBoost) * (maxH - minH)
+                    let x = startX + CGFloat(i) * (barWidth + spacing)
+                    let y = (size.height - h) / 2
+
+                    let rect = CGRect(x: x, y: y, width: barWidth, height: h)
+                    let gradient = Gradient(colors: [
+                        Color(red: 0.36, green: 0.32, blue: 1.0),
+                        Color(red: 0.55, green: 0.4, blue: 1.0),
+                        Color(red: 0.72, green: 0.5, blue: 1.0),
+                    ])
+                    context.fill(
+                        Path(roundedRect: rect, cornerRadius: 1.25),
+                        with: .linearGradient(
+                            gradient,
+                            startPoint: CGPoint(x: x, y: y + h),
+                            endPoint: CGPoint(x: x, y: y)
+                        )
+                    )
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Menu Bar Content
 
 private struct MenuBarContentView: View {
     let snapshot: SystemSnapshot
@@ -57,7 +390,7 @@ private struct MenuBarContentView: View {
     let store: MetricsStore
     @Binding var refreshing: Bool
     @Binding var settings: StatBarSettings
-    @Environment(\.openSettings) private var openSettings
+    var showSettings: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -77,6 +410,11 @@ private struct MenuBarContentView: View {
 
             topProcessesSection
 
+            if snapshot.audio.isActive || snapshot.video.isPlaying {
+                Divider()
+                nowPlayingSection
+            }
+
             Divider()
 
             deepseekSection
@@ -89,8 +427,9 @@ private struct MenuBarContentView: View {
 
             footer
         }
-        .padding(16)
-        .frame(width: 280)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Header
@@ -285,6 +624,45 @@ private struct MenuBarContentView: View {
         }
     }
 
+    // MARK: - Now Playing
+
+    private var nowPlayingSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if snapshot.audio.isActive {
+                HStack {
+                    Image(systemName: "waveform")
+                        .font(.callout)
+                        .foregroundStyle(.purple)
+                    Text("Audio")
+                        .font(.callout)
+                    Spacer()
+                    AudioWaveformView(data: snapshot.audio.waveformData)
+                        .frame(width: 80, height: 24)
+                }
+            }
+
+            if snapshot.video.isPlaying {
+                HStack(spacing: 8) {
+                    Image(systemName: "play.fill")
+                        .font(.callout)
+                        .foregroundStyle(.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(snapshot.video.appName)
+                            .font(.callout)
+                            .lineLimit(1)
+                        if !snapshot.video.windowTitle.isEmpty {
+                            Text(snapshot.video.windowTitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+
     // MARK: - DeepSeek
 
     private var deepseekSection: some View {
@@ -364,14 +742,6 @@ private struct MenuBarContentView: View {
 
             Spacer()
 
-            Button {
-                openSettings()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.callout)
-            }
-            .buttonStyle(.plain)
-
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
@@ -421,7 +791,7 @@ private struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 460)
+        .frame(width: 560)
     }
 
     private func menuBarRow(icon: String, label: String, config: Binding<MenuBarItemConfig>) -> some View {
@@ -432,8 +802,8 @@ private struct SettingsView: View {
                     Text(label)
                 }
             }
-            .toggleStyle(.checkbox)
-            .frame(width: 120, alignment: .leading)
+            .toggleStyle(.switch)
+            .frame(width: 140, alignment: .leading)
 
             Picker("Style", selection: config.style) {
                 ForEach(MenuBarItemStyle.allCases, id: \.self) { style in

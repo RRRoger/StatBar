@@ -8,8 +8,12 @@ public final class MetricsStore {
 
     private var provider: any SystemMetricsProviding
     private var refreshTask: Task<Void, Never>?
+    private var audioTask: Task<Void, Never>?
     private var refreshInterval: Duration
     private var isRunning = false
+    private let audioProvider = AudioMonitorProvider()
+    private let videoProvider = VideoAppProvider()
+    private var audioStarted = false
 
     public init(
         provider: any SystemMetricsProviding = MacSystemMetricsProvider(),
@@ -26,6 +30,7 @@ public final class MetricsStore {
     public func start() {
         isRunning = true
         refresh()
+        startAudioCapture()
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -34,12 +39,24 @@ public final class MetricsStore {
                 self?.refresh()
             }
         }
+        // Separate high-frequency audio refresh (~10fps)
+        audioTask?.cancel()
+        audioTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                self?.refreshAudioLevel()
+            }
+        }
     }
 
     public func stop() {
         isRunning = false
         refreshTask?.cancel()
         refreshTask = nil
+        audioTask?.cancel()
+        audioTask = nil
+        audioProvider.stop()
     }
 
     public func updateRefreshInterval(_ interval: Duration) {
@@ -48,6 +65,24 @@ public final class MetricsStore {
         if isRunning {
             start()
         }
+    }
+
+    private func startAudioCapture() {
+        guard !audioStarted else { return }
+        audioStarted = true
+        Task {
+            await audioProvider.start()
+        }
+    }
+
+    private func refreshAudioLevel() {
+        var snap = snapshot
+        snap.audio = AudioLevelMetrics(
+            currentLevel: audioProvider.currentLevel(),
+            waveformData: audioProvider.waveform(),
+            isActive: audioProvider.currentLevel() > 0.01
+        )
+        snapshot = snap
     }
 
     public func refreshDeepSeek() {
@@ -69,9 +104,11 @@ public final class MetricsStore {
 
     public func refresh() {
         let providerCopy = provider
+        let videoP = videoProvider
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var p = providerCopy
-            let snap = p.snapshot()
+            var snap = p.snapshot()
+            snap.video = videoP.snapshot()
             DispatchQueue.main.async {
                 self?.snapshot = snap
                 self?.provider = p

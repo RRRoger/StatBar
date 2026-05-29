@@ -91,6 +91,30 @@ public struct DeepSeekMetrics: Equatable, Sendable {
     }
 }
 
+public struct AudioLevelMetrics: Equatable, Sendable {
+    public var currentLevel: Float
+    public var waveformData: [Float]
+    public var isActive: Bool
+
+    public init(currentLevel: Float = 0, waveformData: [Float] = Array(repeating: 0, count: 12), isActive: Bool = false) {
+        self.currentLevel = currentLevel
+        self.waveformData = waveformData
+        self.isActive = isActive
+    }
+}
+
+public struct VideoPlaybackInfo: Equatable, Sendable {
+    public var isPlaying: Bool
+    public var appName: String
+    public var windowTitle: String
+
+    public init(isPlaying: Bool = false, appName: String = "", windowTitle: String = "") {
+        self.isPlaying = isPlaying
+        self.appName = appName
+        self.windowTitle = windowTitle
+    }
+}
+
 public struct SystemSnapshot: Equatable, Sendable {
     public var cpu: CPUMetrics
     public var memory: MemoryMetrics
@@ -100,6 +124,8 @@ public struct SystemSnapshot: Equatable, Sendable {
     public var topProcesses: [TopProcessInfo]
     public var uptime: TimeInterval
     public var deepseek: DeepSeekMetrics
+    public var audio: AudioLevelMetrics
+    public var video: VideoPlaybackInfo
     public var capturedAt: Date
 
     public init(
@@ -111,6 +137,8 @@ public struct SystemSnapshot: Equatable, Sendable {
         topProcesses: [TopProcessInfo] = [],
         uptime: TimeInterval = 0,
         deepseek: DeepSeekMetrics = DeepSeekMetrics(),
+        audio: AudioLevelMetrics = AudioLevelMetrics(),
+        video: VideoPlaybackInfo = VideoPlaybackInfo(),
         capturedAt: Date = Date()
     ) {
         self.cpu = cpu
@@ -121,6 +149,8 @@ public struct SystemSnapshot: Equatable, Sendable {
         self.topProcesses = topProcesses
         self.uptime = uptime
         self.deepseek = deepseek
+        self.audio = audio
+        self.video = video
         self.capturedAt = capturedAt
     }
 }
@@ -200,6 +230,29 @@ public struct StatBarFormatter: Sendable {
 
     private func wholePercent(_ value: Double) -> Int {
         Int(value.clampedPercent.rounded())
+    }
+
+    public func islandSummaryTitle(for snapshot: SystemSnapshot, config: MenuBarConfig) -> String {
+        let parts: [String] = [
+            itemText(icon: "🔥", label: "CPU", value: "\(wholePercent(snapshot.cpu.usage))%", config: config.cpu),
+            itemText(icon: "💾", label: "MEM", value: "\(wholePercent(snapshot.memory.usage))%", config: config.memory),
+            networkSummaryText(for: snapshot, config: config.network),
+        ].compactMap { $0.isEmpty ? nil : $0 }
+
+        if parts.isEmpty { return "StatBar" }
+        return parts.joined(separator: " ")
+    }
+
+    private func networkSummaryText(for snapshot: SystemSnapshot, config: MenuBarItemConfig) -> String {
+        guard config.visible else { return "" }
+        let down = compactRate(snapshot.network.downBytesPerSec)
+        let up = compactRate(snapshot.network.upBytesPerSec)
+        switch config.style {
+        case .emoji, .number:
+            return "↓\(down) ↑\(up)"
+        case .label:
+            return "NET ↓\(down) ↑\(up)"
+        }
     }
 
     private func compactRate(_ bytesPerSec: UInt64) -> String {

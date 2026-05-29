@@ -117,7 +117,7 @@ import Testing
 
 @Test func uptimeFormatterShowsReadableDuration() {
     // 3 days + 12 hours + 34 minutes in seconds
-    let uptime: TimeInterval = 3 * 86_400 + 12 * 3_600 + 34 * 60
+    let uptime = TimeInterval(304_440)
     let text = StatBarFormatter().uptimeText(uptime)
     #expect(text.contains("3"))
     #expect(text.contains("d"))
@@ -364,6 +364,56 @@ import Testing
     )
     let title = StatBarFormatter().menuTitle(for: snapshot, config: config)
     #expect(title == "90%")
+}
+
+// MARK: - Dynamic Island formatter
+
+@Test func islandSummaryTitleShowsCoreMetrics() {
+    let snapshot = SystemSnapshot(
+        cpu: CPUMetrics(usage: 22.6),
+        memory: MemoryMetrics(usedBytes: 65, totalBytes: 100),
+        network: NetworkMetrics(downBytesPerSec: 1_200_000, upBytesPerSec: 300_000),
+        capturedAt: Date()
+    )
+
+    let title = StatBarFormatter().islandSummaryTitle(for: snapshot, config: MenuBarConfig())
+    #expect(title == "🔥 23% 💾 65% ↓1.2M ↑300K")
+}
+
+@Test func islandSummaryTitleHidesInvisibleItems() {
+    var config = MenuBarConfig()
+    config.cpu.visible = false
+    config.network.visible = false
+
+    let snapshot = SystemSnapshot(
+        cpu: CPUMetrics(usage: 50),
+        memory: MemoryMetrics(usedBytes: 1, totalBytes: 2),
+        network: NetworkMetrics(downBytesPerSec: 1_200_000, upBytesPerSec: 300_000),
+        capturedAt: Date()
+    )
+
+    let title = StatBarFormatter().islandSummaryTitle(for: snapshot, config: config)
+    #expect(!title.contains("🔥"))
+    #expect(!title.contains("↓"))
+    #expect(title.contains("💾"))
+    #expect(title.contains("50%"))
+}
+
+@Test func islandSummaryTitleReturnsStatBarWhenAllSummaryItemsHidden() {
+    var config = MenuBarConfig()
+    config.cpu.visible = false
+    config.memory.visible = false
+    config.network.visible = false
+    config.disk.visible = false
+
+    let snapshot = SystemSnapshot(
+        cpu: CPUMetrics(usage: 0),
+        memory: MemoryMetrics(usedBytes: 0, totalBytes: 1),
+        capturedAt: Date()
+    )
+
+    let title = StatBarFormatter().islandSummaryTitle(for: snapshot, config: config)
+    #expect(title == "StatBar")
 }
 
 @Test func menuTitleReturnsStatBarWhenAllHidden() {
