@@ -5,3 +5,5 @@ DerivedData/
 *.xcuserdata/
 *.xcscmblueprint
 .superpowers/
+.codex-pet-runs/
+output/
