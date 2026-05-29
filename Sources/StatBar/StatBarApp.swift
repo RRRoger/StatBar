@@ -269,15 +269,40 @@ private struct IslandRootView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.blue)
                 }
+                ThreeBodyView(size: 30)
+                    .allowsHitTesting(false)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 16)
             .frame(width: IslandLayout.compactSize.width, height: IslandLayout.compactSize.height)
-            .background(.black.opacity(0.92))
+            .background(
+                ZStack {
+                    Color.black.opacity(0.92)
+                    if isHot {
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [.red.opacity(0.15), .clear, .red.opacity(0.08)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .blur(radius: 8)
+                    }
+                }
+            )
             .clipShape(Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.08), lineWidth: 1))
+            .overlay(Capsule().stroke(isHot ? Color.red.opacity(0.2) : Color.white.opacity(0.08), lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+
+    private func networkPulse(rate: UInt64, color: Color) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: rate > 0 ? 5 : 3, height: rate > 0 ? 5 : 3)
+            .opacity(rate > 0 ? 0.9 : 0.3)
+            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: rate > 0)
     }
 
     private var expandedIsland: some View {
@@ -436,8 +461,8 @@ private struct MenuBarContentView: View {
             }
             .font(.callout)
 
-            ProgressView(value: min(1, max(0, snapshot.cpu.usage / 100)))
-                .progressViewStyle(.linear)
+            AnimatedProgressBar(value: snapshot.cpu.usage / 100,
+                                gradient: snapshot.cpu.usage > 90 ? Gradient(colors: [.red, .orange]) : Gradient(colors: [.green, .cyan]))
         }
     }
 
@@ -453,8 +478,8 @@ private struct MenuBarContentView: View {
             }
             .font(.callout)
 
-            ProgressView(value: min(1, max(0, snapshot.memory.usage / 100)))
-                .progressViewStyle(.linear)
+            AnimatedProgressBar(value: snapshot.memory.usage / 100,
+                                gradient: snapshot.memory.usage > 90 ? Gradient(colors: [.red, .orange]) : Gradient(colors: [.purple, .pink]))
 
             HStack {
                 Text("Used")
@@ -483,12 +508,14 @@ private struct MenuBarContentView: View {
             Text("🌐 Network")
                 .font(.callout)
 
-            HStack {
+            HStack(spacing: 6) {
+                NetworkActivityDot(rate: snapshot.network.downBytesPerSec, color: .cyan)
                 Text("↓ \(formatter.networkRateText(snapshot.network.downBytesPerSec))")
                     .font(.caption)
                 Spacer()
                 Text("↑ \(formatter.networkRateText(snapshot.network.upBytesPerSec))")
                     .font(.caption)
+                NetworkActivityDot(rate: snapshot.network.upBytesPerSec, color: .orange)
             }
             .monospacedDigit()
         }
@@ -506,8 +533,8 @@ private struct MenuBarContentView: View {
             }
             .font(.callout)
 
-            ProgressView(value: min(1, max(0, snapshot.disk.usage / 100)))
-                .progressViewStyle(.linear)
+            AnimatedProgressBar(value: snapshot.disk.usage / 100,
+                                gradient: snapshot.disk.usage > 90 ? Gradient(colors: [.red, .orange]) : Gradient(colors: [.blue, .cyan]))
 
             HStack {
                 Text("Used")
@@ -858,5 +885,207 @@ private struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize()
         }
+    }
+}
+
+// MARK: - Animated Progress Bar
+
+private struct AnimatedProgressBar: View {
+    let value: Double
+    let gradient: Gradient
+    @State private var shimmerPhase: CGFloat = 0
+
+    private var clamped: CGFloat { CGFloat(min(1, max(0, value))) }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                // Track
+                Capsule()
+                    .fill(.white.opacity(0.08))
+
+                // Fill with gradient + shimmer
+                Capsule()
+                    .fill(
+                        LinearGradient(gradient: gradient, startPoint: .leading, endPoint: .trailing)
+                    )
+                    .frame(width: geo.size.width * clamped)
+                    .overlay(
+                        GeometryReader { fillGeo in
+                            if fillGeo.size.width > 0 {
+                                LinearGradient(
+                                    colors: [.clear, .white.opacity(0.3), .clear],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                                .frame(width: fillGeo.size.width * 0.4)
+                                .offset(x: shimmerPhase * fillGeo.size.width * 1.4 - fillGeo.size.width * 0.2)
+                                .blendMode(.overlay)
+                            }
+                        }
+                        .clipped()
+                    )
+                    .animation(.easeInOut(duration: 0.5), value: clamped)
+            }
+        }
+        .frame(height: 6)
+        .onAppear {
+            withAnimation(.linear(duration: 2.2).repeatForever(autoreverses: false)) {
+                shimmerPhase = 1
+            }
+        }
+    }
+}
+
+// MARK: - Three-Body Simulation
+
+private struct ThreeBodyState: Equatable {
+    struct Body: Equatable {
+        var x: Double
+        var y: Double
+        var vx: Double
+        var vy: Double
+        let mass: Double
+        let color: Color
+    }
+    var bodies: [Body]
+}
+
+private class ThreeBodySimulator: ObservableObject, @unchecked Sendable {
+    @Published var state: ThreeBodyState
+    private var timer: Timer?
+
+    // Classic figure-eight initial conditions (scaled)
+    private static let initialBodies: [ThreeBodyState.Body] = [
+        ThreeBodyState.Body(x: -0.97, y: 0.2434, vx: 0.4662, vy: 0.4324, mass: 1.0, color: .cyan),
+        ThreeBodyState.Body(x: 0.97, y: -0.2434, vx: 0.4662, vy: 0.4324, mass: 1.0, color: .orange),
+        ThreeBodyState.Body(x: 0, y: 0, vx: -0.9324, vy: -0.8648, mass: 1.0, color: .pink),
+    ]
+
+    init() {
+        self.state = ThreeBodyState(bodies: Self.initialBodies)
+    }
+
+    func start() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.step()
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func step() {
+        let dt = 0.015
+        let G = 1.0
+        let dampening = 0.9999
+        var b = state.bodies
+
+        // Compute gravitational accelerations
+        var ax = [Double](repeating: 0, count: 3)
+        var ay = [Double](repeating: 0, count: 3)
+
+        for i in 0..<3 {
+            for j in 0..<3 where j != i {
+                let dx = b[j].x - b[i].x
+                let dy = b[j].y - b[i].y
+                let distSq = dx * dx + dy * dy + 0.01 // softening
+                let dist = sqrt(distSq)
+                let force = G * b[j].mass / distSq
+                ax[i] += force * dx / dist
+                ay[i] += force * dy / dist
+            }
+        }
+
+        // Velocity Verlet integration
+        for i in 0..<3 {
+            b[i].vx = (b[i].vx + ax[i] * dt) * dampening
+            b[i].vy = (b[i].vy + ay[i] * dt) * dampening
+            b[i].x += b[i].vx * dt
+            b[i].y += b[i].vy * dt
+
+            // Soft boundary - bounce back if too far
+            let limit = 2.0
+            if b[i].x > limit { b[i].x = limit; b[i].vx *= -0.5 }
+            if b[i].x < -limit { b[i].x = -limit; b[i].vx *= -0.5 }
+            if b[i].y > limit { b[i].y = limit; b[i].vy *= -0.5 }
+            if b[i].y < -limit { b[i].y = -limit; b[i].vy *= -0.5 }
+        }
+
+        state = ThreeBodyState(bodies: b)
+    }
+}
+
+private struct ThreeBodyView: View {
+    @StateObject private var sim = ThreeBodySimulator()
+    let size: CGFloat
+
+    var body: some View {
+        Canvas { ctx, canvasSize in
+            let cx = canvasSize.width / 2
+            let cy = canvasSize.height / 2
+            let scale = min(canvasSize.width, canvasSize.height) / 5.5
+
+            // Draw faint trails (using previous positions is expensive, so draw orbital hint)
+            for body in sim.state.bodies {
+                let px = cx + CGFloat(body.x) * scale
+                let py = cy - CGFloat(body.y) * scale
+                let dotSize: CGFloat = size > 20 ? 5 : 4
+
+                // Glow
+                ctx.drawLayer { layerCtx in
+                    layerCtx.addFilter(.blur(radius: 3))
+                    layerCtx.draw(
+                        layerCtx.resolveSymbol(id: 0)!,
+                        at: CGPoint(x: px, y: py)
+                    )
+                }
+
+                // Core dot
+                let rect = CGRect(x: px - dotSize/2, y: py - dotSize/2, width: dotSize, height: dotSize)
+                ctx.fill(Circle().path(in: rect), with: .color(body.color.opacity(0.9)))
+            }
+        } symbols: {
+            // Glow symbols
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(sim.state.bodies[i].color.opacity(0.4))
+                    .frame(width: size > 20 ? 10 : 8, height: size > 20 ? 10 : 8)
+            }
+        }
+        .frame(width: size, height: size)
+        .onAppear { sim.start() }
+        .onDisappear { sim.stop() }
+    }
+}
+
+// MARK: - Network Activity Dot
+
+private struct NetworkActivityDot: View {
+    let rate: UInt64
+    let color: Color
+    @State private var pulsing = false
+
+    private var active: Bool { rate > 0 }
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: active ? 6 : 4, height: active ? 6 : 4)
+            .opacity(active ? (pulsing ? 1.0 : 0.5) : 0.2)
+            .scaleEffect(active ? (pulsing ? 1.2 : 0.8) : 1.0)
+            .animation(
+                active
+                    ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
+                    : .default,
+                value: pulsing
+            )
+            .animation(.easeInOut(duration: 0.3), value: active)
+            .onChange(of: active) { _, newValue in
+                pulsing = newValue
+            }
     }
 }
