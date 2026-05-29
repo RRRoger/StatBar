@@ -223,7 +223,11 @@ public struct TopProcessesProvider: Sendable {
             let rest = scanner.currentIndex..<trimmed.endIndex
             let rawPath = String(trimmed[rest]).trimmingCharacters(in: .whitespaces)
             guard !rawPath.isEmpty, !rawPath.hasPrefix("-") else { continue }
-            let name = (rawPath as NSString).lastPathComponent
+            let rawName = (rawPath as NSString).lastPathComponent
+            // Strip ASCII control characters (0x00-0x1F, 0x7F) that leak from kernel process names
+            let name = String(rawName.unicodeScalars.filter {
+                $0.value > 0x1F && $0.value != 0x7F
+            })
             guard !name.isEmpty else { continue }
             processes.append(TopProcessInfo(name: name, cpuPercent: cpu))
             if processes.count >= 5 { break }
