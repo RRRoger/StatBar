@@ -82,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func showSettings() {
+        isIslandExpanded = false
         if let wc = settingsWindowController, wc.window?.isVisible == true {
             wc.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -717,10 +718,10 @@ private struct SettingsView: View {
             }
 
             Section("Alerts") {
-                thresholdField("CPU High Usage", value: $settings.alerts.cpuHighUsagePercent, suffix: "%")
-                thresholdField("Memory High Usage", value: $settings.alerts.memoryHighUsagePercent, suffix: "%")
-                thresholdField("Disk High Usage", value: $settings.alerts.diskHighUsagePercent, suffix: "%")
-                thresholdField("DeepSeek Low Balance", value: $settings.alerts.deepSeekLowBalance, suffix: "CNY")
+                thresholdField("CPU", value: $settings.alerts.cpuHighUsagePercent, suffix: "%")
+                thresholdField("Memory", value: $settings.alerts.memoryHighUsagePercent, suffix: "%")
+                thresholdField("Disk", value: $settings.alerts.diskHighUsagePercent, suffix: "%")
+                thresholdField("DeepSeek", value: $settings.alerts.deepSeekLowBalance, suffix: "¥")
             }
 
             Section("Profile") {
@@ -729,9 +730,14 @@ private struct SettingsView: View {
                 HStack {
                     Text("Avatar Path")
                     Spacer()
-                    TextField("e.g. ~/Pictures/avatar.jpeg", text: $settings.profile.avatarPath)
+                    if settings.profile.avatarPath.isEmpty {
+                        Text("e.g. ~/Pictures/avatar.jpeg")
+                            .foregroundStyle(.tertiary)
+                            .font(.callout)
+                    }
+                    TextField("", text: $settings.profile.avatarPath)
                         .multilineTextAlignment(.trailing)
-                        .frame(width: 260)
+                        .frame(width: 200)
                     Button("Browse...") {
                         let panel = NSOpenPanel()
                         panel.allowedContentTypes = [.jpeg, .png]
@@ -748,9 +754,14 @@ private struct SettingsView: View {
                 HStack {
                     Text("API Key")
                     Spacer()
-                    SecureField("sk-...", text: $settings.profile.deepSeekApiKey)
+                    if settings.profile.deepSeekApiKey.isEmpty {
+                        Text("sk-...")
+                            .foregroundStyle(.tertiary)
+                            .font(.callout)
+                    }
+                    SecureField("", text: $settings.profile.deepSeekApiKey)
                         .multilineTextAlignment(.trailing)
-                        .frame(width: 260)
+                        .frame(width: 200)
                 }
                 HStack {
                     Spacer()
@@ -812,15 +823,17 @@ private struct SettingsView: View {
                 }
             }
             .toggleStyle(.switch)
-            .frame(width: 140, alignment: .leading)
+            .frame(width: 120, alignment: .leading)
 
-            Picker("Style", selection: config.style) {
+            Picker("", selection: config.style) {
                 ForEach(MenuBarItemStyle.allCases, id: \.self) { style in
                     Text(styleName(style)).tag(style)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .disabled(!config.visible.wrappedValue)
+            .opacity(config.visible.wrappedValue ? 1.0 : 0.4)
         }
     }
 
@@ -835,13 +848,15 @@ private struct SettingsView: View {
     private func thresholdField(_ title: String, value: Binding<Double>, suffix: String) -> some View {
         HStack {
             Text(title)
+                .layoutPriority(1)
             Spacer()
-            TextField(title, value: value, format: .number.precision(.fractionLength(0...2)))
+            TextField("", value: value, format: .number.precision(.fractionLength(0...2)))
                 .multilineTextAlignment(.trailing)
-                .frame(width: 76)
+                .frame(width: 60)
+                .fixedSize()
             Text(suffix)
                 .foregroundStyle(.secondary)
-                .frame(width: 36, alignment: .leading)
+                .fixedSize()
         }
     }
 }
