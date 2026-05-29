@@ -269,6 +269,8 @@ private struct IslandRootView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.blue)
                 }
+                SystemMoodView(mood: snapshot.mood)
+                    .allowsHitTesting(false)
                 ThreeBodyView(size: 30)
                     .allowsHitTesting(false)
             }
@@ -1087,5 +1089,62 @@ private struct NetworkActivityDot: View {
             .onChange(of: active) { _, newValue in
                 pulsing = newValue
             }
+    }
+}
+
+// MARK: - System Mood Face
+
+private struct SystemMoodView: View {
+    let mood: SystemMood
+    @State private var blinkPhase = false
+    @State private var breathScale: CGFloat = 1.0
+
+    var body: some View {
+        Text(mood.emoji)
+            .font(.system(size: 16))
+            .scaleEffect(breathScale)
+            .overlay(blinkOverlay)
+            .onChange(of: mood) { _, _ in
+                // Reset animation on mood change
+            }
+            .onAppear {
+                startBreathing()
+            }
+    }
+
+    @ViewBuilder
+    private var blinkOverlay: some View {
+        if mood == .idle || mood == .relaxed {
+            // Subtle eye-close animation via opacity pulse
+            Rectangle()
+                .fill(.black.opacity(blinkPhase ? 0.15 : 0))
+                .frame(width: 12, height: 4)
+                .offset(y: -1)
+                .blendMode(.destinationOut)
+                .animation(
+                    .easeInOut(duration: 0.15)
+                    .repeatCount(2, autoreverses: true)
+                    .delay(3.0),
+                    value: blinkPhase
+                )
+        }
+    }
+
+    private func startBreathing() {
+        withAnimation(
+            .easeInOut(duration: mood == .onFire ? 0.4 : 1.8)
+            .repeatForever(autoreverses: true)
+        ) {
+            breathScale = mood == .onFire ? 1.15 : 1.06
+        }
+        // Blink timer
+        Timer.scheduledTimer(withTimeInterval: 3.5, repeats: true) { _ in
+            DispatchQueue.main.async {
+                blinkPhase.toggle()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    blinkPhase.toggle()
+                }
+            }
+        }
     }
 }

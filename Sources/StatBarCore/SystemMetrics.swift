@@ -103,6 +103,46 @@ public struct VideoPlaybackInfo: Equatable, Sendable {
     }
 }
 
+/// System mood based on CPU and memory load
+public enum SystemMood: String, Equatable, Sendable {
+    case idle       // 😌  CPU < 10%
+    case relaxed    // 🙂  CPU 10-50%
+    case busy       // 😐  CPU 50-80%
+    case stressed   // 😤  CPU 80-95%
+    case onFire     // 🔥  CPU > 95%
+
+    public init(cpuUsage: Double, memoryUsage: Double) {
+        let load = max(cpuUsage, memoryUsage)
+        switch load {
+        case ..<10:  self = .idle
+        case ..<50:  self = .relaxed
+        case ..<80:  self = .busy
+        case ..<95:  self = .stressed
+        default:     self = .onFire
+        }
+    }
+
+    public var emoji: String {
+        switch self {
+        case .idle:     "😌"
+        case .relaxed:  "🙂"
+        case .busy:     "😐"
+        case .stressed: "😤"
+        case .onFire:   "🔥"
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .idle:     "空闲"
+        case .relaxed:  "轻松"
+        case .busy:     "繁忙"
+        case .stressed: "高压"
+        case .onFire:   "过载"
+        }
+    }
+}
+
 public struct SystemSnapshot: Equatable, Sendable {
     public var cpu: CPUMetrics
     public var memory: MemoryMetrics
@@ -137,6 +177,10 @@ public struct SystemSnapshot: Equatable, Sendable {
         self.deepseek = deepseek
         self.video = video
         self.capturedAt = capturedAt
+    }
+
+    public var mood: SystemMood {
+        SystemMood(cpuUsage: cpu.usage, memoryUsage: memory.usage)
     }
 }
 

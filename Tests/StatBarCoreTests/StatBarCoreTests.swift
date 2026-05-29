@@ -431,3 +431,57 @@ import Testing
     let title = StatBarFormatter().menuTitle(for: snapshot, config: config)
     #expect(title == "StatBar")
 }
+
+// MARK: - SystemMood
+
+@Test func systemMoodIdleWhenLowLoad() {
+    let mood = SystemMood(cpuUsage: 5, memoryUsage: 8)
+    #expect(mood == .idle)
+    #expect(mood.emoji == "😌")
+}
+
+@Test func systemMoodRelaxedWhenModerateLoad() {
+    let mood = SystemMood(cpuUsage: 30, memoryUsage: 20)
+    #expect(mood == .relaxed)
+    #expect(mood.emoji == "🙂")
+}
+
+@Test func systemMoodBusyWhenHighLoad() {
+    let mood = SystemMood(cpuUsage: 65, memoryUsage: 50)
+    #expect(mood == .busy)
+    #expect(mood.emoji == "😐")
+}
+
+@Test func systemMoodStressedWhenVeryHighLoad() {
+    let mood = SystemMood(cpuUsage: 90, memoryUsage: 70)
+    #expect(mood == .stressed)
+    #expect(mood.emoji == "😤")
+}
+
+@Test func systemMoodOnFireWhenExtremeLoad() {
+    let mood = SystemMood(cpuUsage: 97, memoryUsage: 50)
+    #expect(mood == .onFire)
+    #expect(mood.emoji == "🔥")
+}
+
+@Test func systemMoodUsesMaxOfCpuAndMemory() {
+    // CPU low but memory very high → stressed
+    let mood = SystemMood(cpuUsage: 5, memoryUsage: 92)
+    #expect(mood == .stressed)
+}
+
+@Test func systemMoodLabelIsChinese() {
+    #expect(SystemMood(cpuUsage: 2, memoryUsage: 2).label == "空闲")
+    #expect(SystemMood(cpuUsage: 25, memoryUsage: 25).label == "轻松")
+    #expect(SystemMood(cpuUsage: 60, memoryUsage: 60).label == "繁忙")
+    #expect(SystemMood(cpuUsage: 85, memoryUsage: 85).label == "高压")
+    #expect(SystemMood(cpuUsage: 99, memoryUsage: 99).label == "过载")
+}
+
+@Test func systemSnapshotMoodComputed() {
+    let snapshot = SystemSnapshot(
+        cpu: CPUMetrics(usage: 96),
+        memory: MemoryMetrics(usedBytes: 1, totalBytes: 100)
+    )
+    #expect(snapshot.mood == .onFire)
+}
