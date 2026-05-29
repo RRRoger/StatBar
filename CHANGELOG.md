@@ -2,6 +2,31 @@
 
 All notable changes to StatBar will be documented in this file.
 
+## [2.0.0] — 2026-05-30
+
+### Added
+- Dynamic Island floating panel at top-center of screen (NSPanel)
+- Compact island: avatar, CPU/MEM/NET summary, three-body gravitational orbit animation
+- Expanded island: scrollable detail panel with all system metrics
+- Three-body simulation with cyan/orange/pink bodies and glow effects
+- Animated progress bars with gradient shimmer for CPU/Memory/Disk
+- Network activity pulse indicators
+- High-load breathing glow and red border on compact island
+- Video playback detection (Safari, Chrome, IINA, VLC, Netflix, Bilibili, etc.)
+- Settings window: menu bar config, refresh mode, alert thresholds, profile, DeepSeek API Key
+- Avatar path configuration with file browser
+- DeepSeek API Key test connection button
+- Smart placeholder display (hidden when value exists)
+- Auto-collapse island when opening settings
+- Top processes show clean process names (not full paths)
+- Network speed shows full units (KB/s, MB/s) in island
+
+### Changed
+- Expanded panel height reduced from 800px to 750px
+- Alerts section uses shorter labels (CPU/Memory/Disk/DeepSeek)
+- Style picker disabled when metric toggle is off
+- Deploy command uses `rm -rf` before `cp -R` to ensure overwrite
+
 ## [1.2.0] — 2026-05-24
 
 ### Added
