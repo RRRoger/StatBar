@@ -143,6 +143,7 @@ public struct SystemSnapshot: Equatable, Sendable {
 public protocol SystemMetricsProviding: Sendable {
     mutating func snapshot() -> SystemSnapshot
     mutating func refreshDeepSeek() -> DeepSeekMetrics
+    mutating func setDeepSeekApiKey(_ key: String)
 }
 
 public struct StatBarFormatter: Sendable {
@@ -230,13 +231,23 @@ public struct StatBarFormatter: Sendable {
 
     private func networkSummaryText(for snapshot: SystemSnapshot, config: MenuBarItemConfig) -> String {
         guard config.visible else { return "" }
-        let down = compactRate(snapshot.network.downBytesPerSec)
-        let up = compactRate(snapshot.network.upBytesPerSec)
+        let down = islandRate(snapshot.network.downBytesPerSec)
+        let up = islandRate(snapshot.network.upBytesPerSec)
         switch config.style {
         case .emoji, .number:
             return "↓\(down) ↑\(up)"
         case .label:
             return "NET ↓\(down) ↑\(up)"
+        }
+    }
+
+    private func islandRate(_ bytesPerSec: UInt64) -> String {
+        if bytesPerSec >= 1_000_000 {
+            String(format: "%.1fMB/s", Double(bytesPerSec) / 1_000_000)
+        } else if bytesPerSec >= 1_000 {
+            String(format: "%.0fKB/s", Double(bytesPerSec) / 1_000)
+        } else {
+            "0B/s"
         }
     }
 
@@ -321,6 +332,10 @@ public struct MacSystemMetricsProvider: SystemMetricsProviding {
 
     public mutating func refreshDeepSeek() -> DeepSeekMetrics {
         deepseekProvider.forceRefresh()
+    }
+
+    public mutating func setDeepSeekApiKey(_ key: String) {
+        deepseekProvider.apiKeyOverride = key
     }
 
     private func readCPUSample() -> CPUTickSample? {

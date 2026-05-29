@@ -51,6 +51,10 @@ public final class MetricsStore {
         }
     }
 
+    public func setDeepSeekApiKey(_ key: String) {
+        provider.setDeepSeekApiKey(key)
+    }
+
     public func refreshDeepSeek() {
         let providerCopy = provider
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in

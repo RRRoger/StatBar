@@ -4,7 +4,11 @@ import QuartzCore
 import StatBarCore
 import SwiftUI
 
-private func loadAvatar() -> NSImage? {
+private func loadAvatar(customPath: String? = nil) -> NSImage? {
+    if let customPath = customPath, !customPath.isEmpty,
+       let image = NSImage(contentsOfFile: customPath) {
+        return image
+    }
     guard let path = Bundle.main.path(forResource: "avatar", ofType: "jpeg") else { return nil }
     return NSImage(contentsOfFile: path)
 }
@@ -13,7 +17,7 @@ private func loadAvatar() -> NSImage? {
 
 private enum IslandLayout {
     static let compactSize = NSSize(width: 320, height: 42)
-    static let expandedSize = NSSize(width: 420, height: 800)
+    static let expandedSize = NSSize(width: 420, height: 750)
     static let topInset: CGFloat = 8
 }
 
@@ -59,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSApp.setActivationPolicy(.accessory)
         setupIslandPanel()
         observeStore()
+        store.setDeepSeekApiKey(settings.profile.deepSeekApiKey)
         store.start()
     }
 
@@ -72,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func onSettingsChanged() {
         settings.save()
         store.updateRefreshInterval(settings.refresh.interval)
+        store.setDeepSeekApiKey(settings.profile.deepSeekApiKey)
         updateIslandPanel()
     }
 
@@ -86,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             get: { [weak self] in self?.settings ?? StatBarSettings() },
             set: { [weak self] in self?.settings = $0; self?.onSettingsChanged() }
         )
-        let view = SettingsView(settings: binding)
+        let view = SettingsView(settings: binding, store: store)
         let hosting = NSHostingController(rootView: view)
         let window = NSWindow(contentViewController: hosting)
         window.title = "StatBar Settings"
@@ -241,9 +247,17 @@ private struct IslandRootView: View {
     private var compactIsland: some View {
         Button(action: toggleExpanded) {
             HStack(spacing: 10) {
-                Circle()
-                    .fill(isHot ? Color.red : Color.green)
-                    .frame(width: 8, height: 8)
+                if let avatar = loadAvatar(customPath: settings.profile.avatarPath) {
+                    Image(nsImage: avatar)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 28, height: 28)
+                        .clipShape(Circle())
+                } else {
+                    Circle()
+                        .fill(isHot ? Color.red : Color.green)
+                        .frame(width: 8, height: 8)
+                }
                 Text(formatter.islandSummaryTitle(for: snapshot, config: settings.menuBar))
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .lineLimit(1)
@@ -383,7 +397,7 @@ private struct MenuBarContentView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            if let avatar = loadAvatar() {
+            if let avatar = loadAvatar(customPath: settings.profile.avatarPath) {
                 Image(nsImage: avatar)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -614,6 +628,9 @@ private struct MenuBarContentView: View {
                 .animation(.easeInOut(duration: 0.3), value: refreshing)
             }
             .font(.callout)
+            Link("🔗 deepseek.com", destination: URL(string: "https://platform.deepseek.com")!)
+                .font(.caption)
+                .foregroundStyle(.blue)
         }
     }
 
@@ -675,6 +692,7 @@ private struct MenuBarContentView: View {
 
 private struct SettingsView: View {
     @Binding var settings: StatBarSettings
+    var store: MetricsStore
 
     var body: some View {
         Form {
@@ -708,11 +726,81 @@ private struct SettingsView: View {
             Section("Profile") {
                 TextField("Display Name", text: $settings.profile.displayName)
                 TextField("Subtitle", text: $settings.profile.subtitle)
+                HStack {
+                    Text("Avatar Path")
+                    Spacer()
+                    TextField("e.g. ~/Pictures/avatar.jpeg", text: $settings.profile.avatarPath)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 260)
+                    Button("Browse...") {
+                        let panel = NSOpenPanel()
+                        panel.allowedContentTypes = [.jpeg, .png]
+                        panel.allowsMultipleSelection = false
+                        panel.canChooseDirectories = false
+                        if panel.runModal() == .OK, let url = panel.url {
+                            settings.profile.avatarPath = url.path
+                        }
+                    }
+                }
+            }
+
+            Section("DeepSeek") {
+                HStack {
+                    Text("API Key")
+                    Spacer()
+                    SecureField("sk-...", text: $settings.profile.deepSeekApiKey)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 260)
+                }
+                HStack {
+                    Spacer()
+                    if let result = testResult {
+                        Text(result)
+                            .font(.caption)
+                    }
+                    Button("Test Connection") {
+                        testDeepSeekConnection()
+                    }
+                    .disabled(settings.profile.deepSeekApiKey.isEmpty || testing)
+                }
             }
         }
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 560)
+    }
+
+    @State private var testResult: String?
+    @State private var testing = false
+
+    private func testDeepSeekConnection() {
+        testing = true
+        testResult = nil
+        let key = settings.profile.deepSeekApiKey
+        var request = URLRequest(url: URL(string: "https://api.deepseek.com/user/balance")!)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 10
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                testing = false
+                if let error = error {
+                    testResult = "❌ \(error.localizedDescription)"
+                    return
+                }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    testResult = "❌ No response"
+                    return
+                }
+                if httpResponse.statusCode == 200 {
+                    testResult = "✅ Connection successful"
+                } else {
+                    testResult = "❌ HTTP \(httpResponse.statusCode)"
+                }
+            }
+        }.resume()
     }
 
     private func menuBarRow(icon: String, label: String, config: Binding<MenuBarItemConfig>) -> some View {

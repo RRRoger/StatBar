@@ -98,10 +98,19 @@ public struct ProfileSettings: Codable, Equatable, Sendable {
     public var subtitle: String {
         didSet { subtitle = Self.normalized(subtitle, fallback: Self.defaultSubtitle) }
     }
+    public var avatarPath: String
+    public var deepSeekApiKey: String
 
-    public init(displayName: String = Self.defaultDisplayName, subtitle: String = Self.defaultSubtitle) {
+    public init(
+        displayName: String = Self.defaultDisplayName,
+        subtitle: String = Self.defaultSubtitle,
+        avatarPath: String = "",
+        deepSeekApiKey: String = ""
+    ) {
         self.displayName = Self.normalized(displayName, fallback: Self.defaultDisplayName)
         self.subtitle = Self.normalized(subtitle, fallback: Self.defaultSubtitle)
+        self.avatarPath = avatarPath
+        self.deepSeekApiKey = deepSeekApiKey
     }
 
     private static func normalized(_ value: String, fallback: String) -> String {

@@ -377,7 +377,7 @@ import Testing
     )
 
     let title = StatBarFormatter().islandSummaryTitle(for: snapshot, config: MenuBarConfig())
-    #expect(title == "🔥 23% 💾 65% ↓1.2M ↑300K")
+    #expect(title == "🔥 23% 💾 65% ↓1.2MB/s ↑300KB/s")
 }
 
 @Test func islandSummaryTitleHidesInvisibleItems() {
