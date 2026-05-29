@@ -91,18 +91,6 @@ public struct DeepSeekMetrics: Equatable, Sendable {
     }
 }
 
-public struct AudioLevelMetrics: Equatable, Sendable {
-    public var currentLevel: Float
-    public var waveformData: [Float]
-    public var isActive: Bool
-
-    public init(currentLevel: Float = 0, waveformData: [Float] = Array(repeating: 0, count: 12), isActive: Bool = false) {
-        self.currentLevel = currentLevel
-        self.waveformData = waveformData
-        self.isActive = isActive
-    }
-}
-
 public struct VideoPlaybackInfo: Equatable, Sendable {
     public var isPlaying: Bool
     public var appName: String
@@ -124,7 +112,6 @@ public struct SystemSnapshot: Equatable, Sendable {
     public var topProcesses: [TopProcessInfo]
     public var uptime: TimeInterval
     public var deepseek: DeepSeekMetrics
-    public var audio: AudioLevelMetrics
     public var video: VideoPlaybackInfo
     public var capturedAt: Date
 
@@ -137,7 +124,6 @@ public struct SystemSnapshot: Equatable, Sendable {
         topProcesses: [TopProcessInfo] = [],
         uptime: TimeInterval = 0,
         deepseek: DeepSeekMetrics = DeepSeekMetrics(),
-        audio: AudioLevelMetrics = AudioLevelMetrics(),
         video: VideoPlaybackInfo = VideoPlaybackInfo(),
         capturedAt: Date = Date()
     ) {
@@ -149,7 +135,6 @@ public struct SystemSnapshot: Equatable, Sendable {
         self.topProcesses = topProcesses
         self.uptime = uptime
         self.deepseek = deepseek
-        self.audio = audio
         self.video = video
         self.capturedAt = capturedAt
     }

@@ -249,10 +249,6 @@ private struct IslandRootView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                 Spacer(minLength: 0)
-                if snapshot.audio.isActive {
-                    AudioWaveformView(data: snapshot.audio.waveformData)
-                        .frame(width: 40, height: 20)
-                }
                 if snapshot.video.isPlaying {
                     Image(systemName: "play.fill")
                         .font(.system(size: 10))
@@ -322,66 +318,6 @@ private struct IslandRootView: View {
     }
 }
 
-// MARK: - Audio Waveform View
-
-private struct AudioWaveformView: View {
-    let data: [Float]
-
-    // Fixed random phases per bar so they move independently
-    private static let phases: [Double] = (0..<12).map { _ in Double.random(in: 0...(2 * .pi)) }
-    private static let speeds: [Double] = (0..<12).map { _ in Double.random(in: 1.5...3.5) }
-    private static let amplitudes: [Double] = (0..<12).map { _ in Double.random(in: 0.12...0.35) }
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 0.016)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            Canvas { context, size in
-                let barCount = 12
-                let barWidth: CGFloat = 2.5
-                let spacing: CGFloat = 1.0
-                let totalWidth = CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * spacing
-                let startX = (size.width - totalWidth) / 2
-                let minH: CGFloat = 2
-                let maxH = size.height
-
-                for i in 0..<barCount {
-                    let level = i < data.count ? CGFloat(data[i]) : 0
-
-                    // When silent: each bar oscillates independently
-                    let silent = level < 0.02
-                    let wave = silent
-                        ? CGFloat(Self.amplitudes[i]) * CGFloat(sin(t * Self.speeds[i] + Self.phases[i])) + 0.18
-                        : level
-
-                    // Mirror effect: bars near center are slightly taller
-                    let center = CGFloat(barCount - 1) / 2
-                    let dist = abs(CGFloat(i) - center) / center
-                    let centerBoost = silent ? (1.0 - dist * 0.3) : 1.0
-
-                    let h = minH + max(0, wave * centerBoost) * (maxH - minH)
-                    let x = startX + CGFloat(i) * (barWidth + spacing)
-                    let y = (size.height - h) / 2
-
-                    let rect = CGRect(x: x, y: y, width: barWidth, height: h)
-                    let gradient = Gradient(colors: [
-                        Color(red: 0.36, green: 0.32, blue: 1.0),
-                        Color(red: 0.55, green: 0.4, blue: 1.0),
-                        Color(red: 0.72, green: 0.5, blue: 1.0),
-                    ])
-                    context.fill(
-                        Path(roundedRect: rect, cornerRadius: 1.25),
-                        with: .linearGradient(
-                            gradient,
-                            startPoint: CGPoint(x: x, y: y + h),
-                            endPoint: CGPoint(x: x, y: y)
-                        )
-                    )
-                }
-            }
-        }
-    }
-}
-
 // MARK: - Menu Bar Content
 
 private struct MenuBarContentView: View {
@@ -410,7 +346,7 @@ private struct MenuBarContentView: View {
 
             topProcessesSection
 
-            if snapshot.audio.isActive || snapshot.video.isPlaying {
+            if snapshot.video.isPlaying {
                 Divider()
                 nowPlayingSection
             }
@@ -628,37 +564,22 @@ private struct MenuBarContentView: View {
 
     private var nowPlayingSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if snapshot.audio.isActive {
-                HStack {
-                    Image(systemName: "waveform")
+            HStack(spacing: 8) {
+                Image(systemName: "play.fill")
+                    .font(.callout)
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(snapshot.video.appName)
                         .font(.callout)
-                        .foregroundStyle(.purple)
-                    Text("Audio")
-                        .font(.callout)
-                    Spacer()
-                    AudioWaveformView(data: snapshot.audio.waveformData)
-                        .frame(width: 80, height: 24)
-                }
-            }
-
-            if snapshot.video.isPlaying {
-                HStack(spacing: 8) {
-                    Image(systemName: "play.fill")
-                        .font(.callout)
-                        .foregroundStyle(.blue)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(snapshot.video.appName)
-                            .font(.callout)
+                        .lineLimit(1)
+                    if !snapshot.video.windowTitle.isEmpty {
+                        Text(snapshot.video.windowTitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
-                        if !snapshot.video.windowTitle.isEmpty {
-                            Text(snapshot.video.windowTitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
                     }
-                    Spacer()
                 }
+                Spacer()
             }
         }
     }
