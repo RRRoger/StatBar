@@ -12,11 +12,13 @@ VERSION_FILE="$ROOT_DIR/version.txt"
 
 cd "$ROOT_DIR"
 
-# Auto-increment build version
-BUILD_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || echo "1")
-NEW_VERSION=$((BUILD_VERSION + 1))
+# Auto-increment patch version (semver: major.minor.patch)
+CURRENT_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || echo "0.0.1")
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+PATCH=$((PATCH + 1))
+NEW_VERSION="$MAJOR.$MINOR.$PATCH"
 echo "$NEW_VERSION" > "$VERSION_FILE"
-echo "Build version: $BUILD_VERSION → $NEW_VERSION"
+echo "Version: $CURRENT_VERSION → $NEW_VERSION"
 
 swift build -c "$CONFIGURATION"
 

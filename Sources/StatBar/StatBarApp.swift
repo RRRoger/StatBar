@@ -1,55 +1,364 @@
 import AppKit
+import Observation
+import QuartzCore
 import StatBarCore
 import SwiftUI
 
-private func loadAvatar() -> NSImage? {
+private func loadAvatar(customPath: String? = nil) -> NSImage? {
+    if let customPath = customPath, !customPath.isEmpty,
+       let image = NSImage(contentsOfFile: customPath) {
+        return image
+    }
     guard let path = Bundle.main.path(forResource: "avatar", ofType: "jpeg") else { return nil }
     return NSImage(contentsOfFile: path)
 }
 
-@main
-struct StatBarApp: App {
-    @State private var store: MetricsStore
-    @State private var deepseekRefreshing = false
-    @State private var settings: StatBarSettings
-    private let formatter = StatBarFormatter()
+// MARK: - Dynamic Island Panel Helper
 
-    init() {
-        let loadedSettings = StatBarSettings.load()
-        _settings = State(initialValue: loadedSettings)
-        _store = State(initialValue: MetricsStore(refreshInterval: loadedSettings.refresh.interval))
+private enum IslandLayout {
+    static let compactSize = NSSize(width: 320, height: 42)
+    static let expandedSize = NSSize(width: 420, height: 750)
+    static let topInset: CGFloat = 8
+}
+
+@MainActor
+private func makeIslandPanel() -> NSPanel {
+    let panel = NSPanel(
+        contentRect: NSRect(origin: .zero, size: IslandLayout.compactSize),
+        styleMask: [.borderless, .nonactivatingPanel],
+        backing: .buffered,
+        defer: false
+    )
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = false
+    panel.level = .statusBar
+    panel.hidesOnDeactivate = false
+    panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+    panel.isMovableByWindowBackground = false
+    return panel
+}
+
+// MARK: - App Delegate
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
+    @Published var settings: StatBarSettings
+    let store: MetricsStore
+    private let formatter = StatBarFormatter()
+    private var islandPanel: NSPanel?
+    private var islandController: NSHostingController<IslandRootView>?
+    private var isIslandExpanded = false
+    private var mouseMonitor: Any?
+    private var settingsWindowController: NSWindowController?
+
+    override init() {
+        let s = StatBarSettings.load()
+        settings = s
+        store = MetricsStore(refreshInterval: s.refresh.interval)
+        super.init()
     }
 
-    var body: some Scene {
-        MenuBarExtra {
-            MenuBarContentView(
-                snapshot: store.snapshot,
-                formatter: formatter,
-                store: store,
-                refreshing: $deepseekRefreshing,
-                settings: $settings
-            )
-        } label: {
-            let title = formatter.menuTitle(for: store.snapshot, config: settings.menuBar)
-            let isHot = store.snapshot.cpu.usage > settings.alerts.cpuHighUsagePercent ||
-                store.snapshot.memory.usage > settings.alerts.memoryHighUsagePercent
-            Text(title)
-                .foregroundStyle(isHot ? .red : .primary)
-                .task {
-                    store.start()
-                }
-        }
-        .menuBarExtraStyle(.window)
+    func applicationDidFinishLaunching(_ aNotification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        setupIslandPanel()
+        observeStore()
+        store.setDeepSeekApiKey(settings.profile.deepSeekApiKey)
+        store.start()
+    }
 
-        Settings {
-            SettingsView(settings: $settings)
-                .onChange(of: settings) {
-                    settings.save()
-                    store.updateRefreshInterval(settings.refresh.interval)
+    func applicationWillTerminate(_ aNotification: Notification) {
+        store.stop()
+        if let mouseMonitor {
+            NSEvent.removeMonitor(mouseMonitor)
+        }
+    }
+
+    func onSettingsChanged() {
+        settings.save()
+        store.updateRefreshInterval(settings.refresh.interval)
+        store.setDeepSeekApiKey(settings.profile.deepSeekApiKey)
+        updateIslandPanel()
+    }
+
+    func showSettings() {
+        isIslandExpanded = false
+        if let wc = settingsWindowController, wc.window?.isVisible == true {
+            wc.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let binding = Binding(
+            get: { [weak self] in self?.settings ?? StatBarSettings() },
+            set: { [weak self] in self?.settings = $0; self?.onSettingsChanged() }
+        )
+        let view = SettingsView(settings: binding, store: store)
+        let hosting = NSHostingController(rootView: view)
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "StatBar Settings"
+        window.styleMask = [.titled, .closable]
+        window.setContentSize(NSSize(width: 560, height: 500))
+        window.center()
+
+        let wc = NSWindowController(window: window)
+        wc.showWindow(nil)
+        settingsWindowController = wc
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Dynamic Island
+
+    private func setupIslandPanel() {
+        let panel = makeIslandPanel()
+        islandPanel = panel
+
+        let controller = NSHostingController(rootView: makeIslandView())
+        controller.view.appearance = NSAppearance(named: .darkAqua)
+        islandController = controller
+        panel.contentViewController = controller
+
+        positionIslandPanel(animated: false)
+        panel.orderFront(nil)
+
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.collapseIsland()
+            }
+        }
+    }
+
+    private func makeIslandView() -> IslandRootView {
+        IslandRootView(
+            snapshot: store.snapshot,
+            store: store,
+            formatter: formatter,
+            settings: Binding(
+                get: { [weak self] in self?.settings ?? StatBarSettings() },
+                set: { [weak self] in
+                    self?.settings = $0
+                    self?.onSettingsChanged()
                 }
+            ),
+            isExpanded: isIslandExpanded,
+            toggleExpanded: { [weak self] in self?.toggleIsland() },
+            collapse: { [weak self] in self?.collapseIsland() },
+            showSettings: { [weak self] in self?.showSettings() }
+        )
+    }
+
+    private func updateIslandPanel() {
+        islandController?.rootView = makeIslandView()
+    }
+
+    private var targetIslandSize: NSSize {
+        isIslandExpanded ? IslandLayout.expandedSize : IslandLayout.compactSize
+    }
+
+    private func toggleIsland() {
+        isIslandExpanded.toggle()
+        updateIslandPanel()
+        positionIslandPanel(animated: true)
+    }
+
+    private func collapseIsland() {
+        guard isIslandExpanded else { return }
+        isIslandExpanded = false
+        updateIslandPanel()
+        positionIslandPanel(animated: true)
+    }
+
+    private func positionIslandPanel(animated: Bool) {
+        guard let panel = islandPanel else { return }
+        // Use the screen under the mouse cursor, fallback to main, then first
+        let mouseLocation = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) })
+                ?? NSScreen.main
+                ?? NSScreen.screens.first else { return }
+
+        let size = targetIslandSize
+        let sf = screen.frame
+        let frame = NSRect(
+            x: sf.origin.x + (sf.width - size.width) / 2,
+            y: sf.maxY - size.height - IslandLayout.topInset,
+            width: size.width,
+            height: size.height
+        )
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+        }
+    }
+
+    // MARK: - Store Observation
+
+    private func observeStore() {
+        withObservationTracking {
+            let _ = store.snapshot
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.updateIslandPanel()
+                self?.observeStore()
+            }
         }
     }
 }
+
+// MARK: - SwiftUI App
+
+@main
+struct StatBarApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+    var body: some Scene {
+        Settings { EmptyView() }
+    }
+}
+
+// MARK: - Island Root
+
+private struct IslandRootView: View {
+    let snapshot: SystemSnapshot
+    let store: MetricsStore
+    let formatter: StatBarFormatter
+    @Binding var settings: StatBarSettings
+    let isExpanded: Bool
+    var toggleExpanded: () -> Void
+    var collapse: () -> Void
+    var showSettings: () -> Void
+    @State private var deepseekRefreshing = false
+
+    var body: some View {
+        Group {
+            if isExpanded {
+                expandedIsland
+            } else {
+                compactIsland
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: isExpanded)
+    }
+
+    private var compactIsland: some View {
+        Button(action: toggleExpanded) {
+            HStack(spacing: 10) {
+                if let avatar = loadAvatar(customPath: settings.profile.avatarPath) {
+                    Image(nsImage: avatar)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 28, height: 28)
+                        .clipShape(Circle())
+                } else {
+                    Circle()
+                        .fill(isHot ? Color.red : Color.green)
+                        .frame(width: 8, height: 8)
+                }
+                Text(formatter.islandSummaryTitle(for: snapshot, config: settings.menuBar))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 0)
+                if snapshot.video.isPlaying {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.blue)
+                }
+                ThreeBodyView(size: 30)
+                    .allowsHitTesting(false)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .frame(width: IslandLayout.compactSize.width, height: IslandLayout.compactSize.height)
+            .background(
+                ZStack {
+                    Color.black.opacity(0.92)
+                    if isHot {
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [.red.opacity(0.15), .clear, .red.opacity(0.08)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .blur(radius: 8)
+                    }
+                }
+            )
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(isHot ? Color.red.opacity(0.2) : Color.white.opacity(0.08), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func networkPulse(rate: UInt64, color: Color) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: rate > 0 ? 5 : 3, height: rate > 0 ? 5 : 3)
+            .opacity(rate > 0 ? 0.9 : 0.3)
+            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: rate > 0)
+    }
+
+    private var expandedIsland: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(isHot ? Color.red : Color.green)
+                    .frame(width: 8, height: 8)
+                Text(formatter.islandSummaryTitle(for: snapshot, config: settings.menuBar))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Spacer()
+                Button(action: showSettings) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                Button(action: collapse) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.top, 14)
+            .padding(.bottom, 2)
+
+            ScrollView {
+                MenuBarContentView(
+                snapshot: snapshot,
+                formatter: formatter,
+                store: store,
+                refreshing: $deepseekRefreshing,
+                settings: $settings,
+                showSettings: showSettings
+            )
+            .foregroundStyle(.white)
+            }
+        }
+        .frame(width: IslandLayout.expandedSize.width, height: IslandLayout.expandedSize.height)
+        .background(.black.opacity(0.94))
+        .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 34, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private var isHot: Bool {
+        snapshot.cpu.usage > settings.alerts.cpuHighUsagePercent ||
+            snapshot.memory.usage > settings.alerts.memoryHighUsagePercent
+    }
+}
+
+// MARK: - Menu Bar Content
 
 private struct MenuBarContentView: View {
     let snapshot: SystemSnapshot
@@ -57,7 +366,7 @@ private struct MenuBarContentView: View {
     let store: MetricsStore
     @Binding var refreshing: Bool
     @Binding var settings: StatBarSettings
-    @Environment(\.openSettings) private var openSettings
+    var showSettings: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -77,6 +386,11 @@ private struct MenuBarContentView: View {
 
             topProcessesSection
 
+            if snapshot.video.isPlaying {
+                Divider()
+                nowPlayingSection
+            }
+
             Divider()
 
             deepseekSection
@@ -89,8 +403,9 @@ private struct MenuBarContentView: View {
 
             footer
         }
-        .padding(16)
-        .frame(width: 280)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Header
@@ -108,7 +423,7 @@ private struct MenuBarContentView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            if let avatar = loadAvatar() {
+            if let avatar = loadAvatar(customPath: settings.profile.avatarPath) {
                 Image(nsImage: avatar)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -146,8 +461,8 @@ private struct MenuBarContentView: View {
             }
             .font(.callout)
 
-            ProgressView(value: min(1, max(0, snapshot.cpu.usage / 100)))
-                .progressViewStyle(.linear)
+            AnimatedProgressBar(value: snapshot.cpu.usage / 100,
+                                gradient: snapshot.cpu.usage > 90 ? Gradient(colors: [.red, .orange]) : Gradient(colors: [.green, .cyan]))
         }
     }
 
@@ -163,8 +478,8 @@ private struct MenuBarContentView: View {
             }
             .font(.callout)
 
-            ProgressView(value: min(1, max(0, snapshot.memory.usage / 100)))
-                .progressViewStyle(.linear)
+            AnimatedProgressBar(value: snapshot.memory.usage / 100,
+                                gradient: snapshot.memory.usage > 90 ? Gradient(colors: [.red, .orange]) : Gradient(colors: [.purple, .pink]))
 
             HStack {
                 Text("Used")
@@ -193,12 +508,14 @@ private struct MenuBarContentView: View {
             Text("🌐 Network")
                 .font(.callout)
 
-            HStack {
+            HStack(spacing: 6) {
+                NetworkActivityDot(rate: snapshot.network.downBytesPerSec, color: .cyan)
                 Text("↓ \(formatter.networkRateText(snapshot.network.downBytesPerSec))")
                     .font(.caption)
                 Spacer()
                 Text("↑ \(formatter.networkRateText(snapshot.network.upBytesPerSec))")
                     .font(.caption)
+                NetworkActivityDot(rate: snapshot.network.upBytesPerSec, color: .orange)
             }
             .monospacedDigit()
         }
@@ -216,8 +533,8 @@ private struct MenuBarContentView: View {
             }
             .font(.callout)
 
-            ProgressView(value: min(1, max(0, snapshot.disk.usage / 100)))
-                .progressViewStyle(.linear)
+            AnimatedProgressBar(value: snapshot.disk.usage / 100,
+                                gradient: snapshot.disk.usage > 90 ? Gradient(colors: [.red, .orange]) : Gradient(colors: [.blue, .cyan]))
 
             HStack {
                 Text("Used")
@@ -285,6 +602,30 @@ private struct MenuBarContentView: View {
         }
     }
 
+    // MARK: - Now Playing
+
+    private var nowPlayingSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "play.fill")
+                    .font(.callout)
+                    .foregroundStyle(.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(snapshot.video.appName)
+                        .font(.callout)
+                        .lineLimit(1)
+                    if !snapshot.video.windowTitle.isEmpty {
+                        Text(snapshot.video.windowTitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+            }
+        }
+    }
+
     // MARK: - DeepSeek
 
     private var deepseekSection: some View {
@@ -315,6 +656,9 @@ private struct MenuBarContentView: View {
                 .animation(.easeInOut(duration: 0.3), value: refreshing)
             }
             .font(.callout)
+            Link("🔗 deepseek.com", destination: URL(string: "https://platform.deepseek.com")!)
+                .font(.caption)
+                .foregroundStyle(.blue)
         }
     }
 
@@ -364,14 +708,6 @@ private struct MenuBarContentView: View {
 
             Spacer()
 
-            Button {
-                openSettings()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.callout)
-            }
-            .buttonStyle(.plain)
-
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
@@ -384,6 +720,7 @@ private struct MenuBarContentView: View {
 
 private struct SettingsView: View {
     @Binding var settings: StatBarSettings
+    var store: MetricsStore
 
     var body: some View {
         Form {
@@ -408,20 +745,100 @@ private struct SettingsView: View {
             }
 
             Section("Alerts") {
-                thresholdField("CPU High Usage", value: $settings.alerts.cpuHighUsagePercent, suffix: "%")
-                thresholdField("Memory High Usage", value: $settings.alerts.memoryHighUsagePercent, suffix: "%")
-                thresholdField("Disk High Usage", value: $settings.alerts.diskHighUsagePercent, suffix: "%")
-                thresholdField("DeepSeek Low Balance", value: $settings.alerts.deepSeekLowBalance, suffix: "CNY")
+                thresholdField("CPU", value: $settings.alerts.cpuHighUsagePercent, suffix: "%")
+                thresholdField("Memory", value: $settings.alerts.memoryHighUsagePercent, suffix: "%")
+                thresholdField("Disk", value: $settings.alerts.diskHighUsagePercent, suffix: "%")
+                thresholdField("DeepSeek", value: $settings.alerts.deepSeekLowBalance, suffix: "¥")
             }
 
             Section("Profile") {
                 TextField("Display Name", text: $settings.profile.displayName)
                 TextField("Subtitle", text: $settings.profile.subtitle)
+                HStack {
+                    Text("Avatar Path")
+                    Spacer()
+                    if settings.profile.avatarPath.isEmpty {
+                        Text("e.g. ~/Pictures/avatar.jpeg")
+                            .foregroundStyle(.tertiary)
+                            .font(.callout)
+                    }
+                    TextField("", text: $settings.profile.avatarPath)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 200)
+                    Button("Browse...") {
+                        let panel = NSOpenPanel()
+                        panel.allowedContentTypes = [.jpeg, .png]
+                        panel.allowsMultipleSelection = false
+                        panel.canChooseDirectories = false
+                        if panel.runModal() == .OK, let url = panel.url {
+                            settings.profile.avatarPath = url.path
+                        }
+                    }
+                }
+            }
+
+            Section("DeepSeek") {
+                HStack {
+                    Text("API Key")
+                    Spacer()
+                    if settings.profile.deepSeekApiKey.isEmpty {
+                        Text("sk-...")
+                            .foregroundStyle(.tertiary)
+                            .font(.callout)
+                    }
+                    SecureField("", text: $settings.profile.deepSeekApiKey)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 200)
+                }
+                HStack {
+                    Spacer()
+                    if let result = testResult {
+                        Text(result)
+                            .font(.caption)
+                    }
+                    Button("Test Connection") {
+                        testDeepSeekConnection()
+                    }
+                    .disabled(settings.profile.deepSeekApiKey.isEmpty || testing)
+                }
             }
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 460)
+        .frame(width: 560)
+    }
+
+    @State private var testResult: String?
+    @State private var testing = false
+
+    private func testDeepSeekConnection() {
+        testing = true
+        testResult = nil
+        let key = settings.profile.deepSeekApiKey
+        var request = URLRequest(url: URL(string: "https://api.deepseek.com/user/balance")!)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 10
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                testing = false
+                if let error = error {
+                    testResult = "❌ \(error.localizedDescription)"
+                    return
+                }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    testResult = "❌ No response"
+                    return
+                }
+                if httpResponse.statusCode == 200 {
+                    testResult = "✅ Connection successful"
+                } else {
+                    testResult = "❌ HTTP \(httpResponse.statusCode)"
+                }
+            }
+        }.resume()
     }
 
     private func menuBarRow(icon: String, label: String, config: Binding<MenuBarItemConfig>) -> some View {
@@ -432,16 +849,18 @@ private struct SettingsView: View {
                     Text(label)
                 }
             }
-            .toggleStyle(.checkbox)
+            .toggleStyle(.switch)
             .frame(width: 120, alignment: .leading)
 
-            Picker("Style", selection: config.style) {
+            Picker("", selection: config.style) {
                 ForEach(MenuBarItemStyle.allCases, id: \.self) { style in
                     Text(styleName(style)).tag(style)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .disabled(!config.visible.wrappedValue)
+            .opacity(config.visible.wrappedValue ? 1.0 : 0.4)
         }
     }
 
@@ -456,13 +875,217 @@ private struct SettingsView: View {
     private func thresholdField(_ title: String, value: Binding<Double>, suffix: String) -> some View {
         HStack {
             Text(title)
+                .layoutPriority(1)
             Spacer()
-            TextField(title, value: value, format: .number.precision(.fractionLength(0...2)))
+            TextField("", value: value, format: .number.precision(.fractionLength(0...2)))
                 .multilineTextAlignment(.trailing)
-                .frame(width: 76)
+                .frame(width: 60)
+                .fixedSize()
             Text(suffix)
                 .foregroundStyle(.secondary)
-                .frame(width: 36, alignment: .leading)
+                .fixedSize()
         }
+    }
+}
+
+// MARK: - Animated Progress Bar
+
+private struct AnimatedProgressBar: View {
+    let value: Double
+    let gradient: Gradient
+    @State private var shimmerPhase: CGFloat = 0
+
+    private var clamped: CGFloat { CGFloat(min(1, max(0, value))) }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                // Track
+                Capsule()
+                    .fill(.white.opacity(0.08))
+
+                // Fill with gradient + shimmer
+                Capsule()
+                    .fill(
+                        LinearGradient(gradient: gradient, startPoint: .leading, endPoint: .trailing)
+                    )
+                    .frame(width: geo.size.width * clamped)
+                    .overlay(
+                        GeometryReader { fillGeo in
+                            if fillGeo.size.width > 0 {
+                                LinearGradient(
+                                    colors: [.clear, .white.opacity(0.3), .clear],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                                .frame(width: fillGeo.size.width * 0.4)
+                                .offset(x: shimmerPhase * fillGeo.size.width * 1.4 - fillGeo.size.width * 0.2)
+                                .blendMode(.overlay)
+                            }
+                        }
+                        .clipped()
+                    )
+                    .animation(.easeInOut(duration: 0.5), value: clamped)
+            }
+        }
+        .frame(height: 6)
+        .onAppear {
+            withAnimation(.linear(duration: 2.2).repeatForever(autoreverses: false)) {
+                shimmerPhase = 1
+            }
+        }
+    }
+}
+
+// MARK: - Three-Body Simulation
+
+private struct ThreeBodyState: Equatable {
+    struct Body: Equatable {
+        var x: Double
+        var y: Double
+        var vx: Double
+        var vy: Double
+        let mass: Double
+        let color: Color
+    }
+    var bodies: [Body]
+}
+
+private class ThreeBodySimulator: ObservableObject, @unchecked Sendable {
+    @Published var state: ThreeBodyState
+    private var timer: Timer?
+
+    // Classic figure-eight initial conditions (scaled)
+    private static let initialBodies: [ThreeBodyState.Body] = [
+        ThreeBodyState.Body(x: -0.97, y: 0.2434, vx: 0.4662, vy: 0.4324, mass: 1.0, color: .cyan),
+        ThreeBodyState.Body(x: 0.97, y: -0.2434, vx: 0.4662, vy: 0.4324, mass: 1.0, color: .orange),
+        ThreeBodyState.Body(x: 0, y: 0, vx: -0.9324, vy: -0.8648, mass: 1.0, color: .pink),
+    ]
+
+    init() {
+        self.state = ThreeBodyState(bodies: Self.initialBodies)
+    }
+
+    func start() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.step()
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func step() {
+        let dt = 0.015
+        let G = 1.0
+        let dampening = 0.9999
+        var b = state.bodies
+
+        // Compute gravitational accelerations
+        var ax = [Double](repeating: 0, count: 3)
+        var ay = [Double](repeating: 0, count: 3)
+
+        for i in 0..<3 {
+            for j in 0..<3 where j != i {
+                let dx = b[j].x - b[i].x
+                let dy = b[j].y - b[i].y
+                let distSq = dx * dx + dy * dy + 0.01 // softening
+                let dist = sqrt(distSq)
+                let force = G * b[j].mass / distSq
+                ax[i] += force * dx / dist
+                ay[i] += force * dy / dist
+            }
+        }
+
+        // Velocity Verlet integration
+        for i in 0..<3 {
+            b[i].vx = (b[i].vx + ax[i] * dt) * dampening
+            b[i].vy = (b[i].vy + ay[i] * dt) * dampening
+            b[i].x += b[i].vx * dt
+            b[i].y += b[i].vy * dt
+
+            // Soft boundary - bounce back if too far
+            let limit = 2.0
+            if b[i].x > limit { b[i].x = limit; b[i].vx *= -0.5 }
+            if b[i].x < -limit { b[i].x = -limit; b[i].vx *= -0.5 }
+            if b[i].y > limit { b[i].y = limit; b[i].vy *= -0.5 }
+            if b[i].y < -limit { b[i].y = -limit; b[i].vy *= -0.5 }
+        }
+
+        state = ThreeBodyState(bodies: b)
+    }
+}
+
+private struct ThreeBodyView: View {
+    @StateObject private var sim = ThreeBodySimulator()
+    let size: CGFloat
+
+    var body: some View {
+        Canvas { ctx, canvasSize in
+            let cx = canvasSize.width / 2
+            let cy = canvasSize.height / 2
+            let scale = min(canvasSize.width, canvasSize.height) / 5.5
+
+            // Draw faint trails (using previous positions is expensive, so draw orbital hint)
+            for body in sim.state.bodies {
+                let px = cx + CGFloat(body.x) * scale
+                let py = cy - CGFloat(body.y) * scale
+                let dotSize: CGFloat = size > 20 ? 5 : 4
+
+                // Glow
+                ctx.drawLayer { layerCtx in
+                    layerCtx.addFilter(.blur(radius: 3))
+                    layerCtx.draw(
+                        layerCtx.resolveSymbol(id: 0)!,
+                        at: CGPoint(x: px, y: py)
+                    )
+                }
+
+                // Core dot
+                let rect = CGRect(x: px - dotSize/2, y: py - dotSize/2, width: dotSize, height: dotSize)
+                ctx.fill(Circle().path(in: rect), with: .color(body.color.opacity(0.9)))
+            }
+        } symbols: {
+            // Glow symbols
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(sim.state.bodies[i].color.opacity(0.4))
+                    .frame(width: size > 20 ? 10 : 8, height: size > 20 ? 10 : 8)
+            }
+        }
+        .frame(width: size, height: size)
+        .onAppear { sim.start() }
+        .onDisappear { sim.stop() }
+    }
+}
+
+// MARK: - Network Activity Dot
+
+private struct NetworkActivityDot: View {
+    let rate: UInt64
+    let color: Color
+    @State private var pulsing = false
+
+    private var active: Bool { rate > 0 }
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: active ? 6 : 4, height: active ? 6 : 4)
+            .opacity(active ? (pulsing ? 1.0 : 0.5) : 0.2)
+            .scaleEffect(active ? (pulsing ? 1.2 : 0.8) : 1.0)
+            .animation(
+                active
+                    ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
+                    : .default,
+                value: pulsing
+            )
+            .animation(.easeInOut(duration: 0.3), value: active)
+            .onChange(of: active) { _, newValue in
+                pulsing = newValue
+            }
     }
 }

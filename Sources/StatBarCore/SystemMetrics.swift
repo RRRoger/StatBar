@@ -91,6 +91,18 @@ public struct DeepSeekMetrics: Equatable, Sendable {
     }
 }
 
+public struct VideoPlaybackInfo: Equatable, Sendable {
+    public var isPlaying: Bool
+    public var appName: String
+    public var windowTitle: String
+
+    public init(isPlaying: Bool = false, appName: String = "", windowTitle: String = "") {
+        self.isPlaying = isPlaying
+        self.appName = appName
+        self.windowTitle = windowTitle
+    }
+}
+
 public struct SystemSnapshot: Equatable, Sendable {
     public var cpu: CPUMetrics
     public var memory: MemoryMetrics
@@ -100,6 +112,7 @@ public struct SystemSnapshot: Equatable, Sendable {
     public var topProcesses: [TopProcessInfo]
     public var uptime: TimeInterval
     public var deepseek: DeepSeekMetrics
+    public var video: VideoPlaybackInfo
     public var capturedAt: Date
 
     public init(
@@ -111,6 +124,7 @@ public struct SystemSnapshot: Equatable, Sendable {
         topProcesses: [TopProcessInfo] = [],
         uptime: TimeInterval = 0,
         deepseek: DeepSeekMetrics = DeepSeekMetrics(),
+        video: VideoPlaybackInfo = VideoPlaybackInfo(),
         capturedAt: Date = Date()
     ) {
         self.cpu = cpu
@@ -121,6 +135,7 @@ public struct SystemSnapshot: Equatable, Sendable {
         self.topProcesses = topProcesses
         self.uptime = uptime
         self.deepseek = deepseek
+        self.video = video
         self.capturedAt = capturedAt
     }
 }
@@ -128,6 +143,7 @@ public struct SystemSnapshot: Equatable, Sendable {
 public protocol SystemMetricsProviding: Sendable {
     mutating func snapshot() -> SystemSnapshot
     mutating func refreshDeepSeek() -> DeepSeekMetrics
+    mutating func setDeepSeekApiKey(_ key: String)
 }
 
 public struct StatBarFormatter: Sendable {
@@ -200,6 +216,39 @@ public struct StatBarFormatter: Sendable {
 
     private func wholePercent(_ value: Double) -> Int {
         Int(value.clampedPercent.rounded())
+    }
+
+    public func islandSummaryTitle(for snapshot: SystemSnapshot, config: MenuBarConfig) -> String {
+        let parts: [String] = [
+            itemText(icon: "🔥", label: "CPU", value: "\(wholePercent(snapshot.cpu.usage))%", config: config.cpu),
+            itemText(icon: "💾", label: "MEM", value: "\(wholePercent(snapshot.memory.usage))%", config: config.memory),
+            networkSummaryText(for: snapshot, config: config.network),
+        ].compactMap { $0.isEmpty ? nil : $0 }
+
+        if parts.isEmpty { return "StatBar" }
+        return parts.joined(separator: " ")
+    }
+
+    private func networkSummaryText(for snapshot: SystemSnapshot, config: MenuBarItemConfig) -> String {
+        guard config.visible else { return "" }
+        let down = islandRate(snapshot.network.downBytesPerSec)
+        let up = islandRate(snapshot.network.upBytesPerSec)
+        switch config.style {
+        case .emoji, .number:
+            return "↓\(down) ↑\(up)"
+        case .label:
+            return "NET ↓\(down) ↑\(up)"
+        }
+    }
+
+    private func islandRate(_ bytesPerSec: UInt64) -> String {
+        if bytesPerSec >= 1_000_000 {
+            String(format: "%.1fMB/s", Double(bytesPerSec) / 1_000_000)
+        } else if bytesPerSec >= 1_000 {
+            String(format: "%.0fKB/s", Double(bytesPerSec) / 1_000)
+        } else {
+            "0B/s"
+        }
     }
 
     private func compactRate(_ bytesPerSec: UInt64) -> String {
@@ -283,6 +332,10 @@ public struct MacSystemMetricsProvider: SystemMetricsProviding {
 
     public mutating func refreshDeepSeek() -> DeepSeekMetrics {
         deepseekProvider.forceRefresh()
+    }
+
+    public mutating func setDeepSeekApiKey(_ key: String) {
+        deepseekProvider.apiKeyOverride = key
     }
 
     private func readCPUSample() -> CPUTickSample? {

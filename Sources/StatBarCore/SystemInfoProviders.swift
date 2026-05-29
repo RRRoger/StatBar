@@ -216,8 +216,9 @@ public struct TopProcessesProvider: Sendable {
             let parts = line.split(separator: " ", omittingEmptySubsequences: true)
             guard parts.count >= 3 else { continue }
             guard let cpu = Double(parts[1]) else { continue }
-            let name = String(parts.suffix(from: 2).joined(separator: " "))
-            guard !name.hasPrefix("-") else { continue }
+            let rawName = String(parts.suffix(from: 2).joined(separator: " "))
+            guard !rawName.hasPrefix("-") else { continue }
+            let name = (rawName as NSString).lastPathComponent
             processes.append(TopProcessInfo(name: name, cpuPercent: cpu))
             if processes.count >= 5 { break }
         }
@@ -262,6 +263,7 @@ public struct DeepSeekBalanceProvider: Sendable {
     private let cacheInterval: TimeInterval = 30
     private var cachedMetrics: DeepSeekMetrics?
     private var lastFetch: Date = .distantPast
+    public var apiKeyOverride: String = ""
 
     public init() {}
 
@@ -271,7 +273,9 @@ public struct DeepSeekBalanceProvider: Sendable {
             return cached
         }
 
-        guard let apiKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"], !apiKey.isEmpty else {
+        let envKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"] ?? ""
+        let apiKey = apiKeyOverride.isEmpty ? envKey : apiKeyOverride
+        guard !apiKey.isEmpty else {
             let empty = DeepSeekMetrics(isAvailable: false)
             cachedMetrics = empty
             lastFetch = now

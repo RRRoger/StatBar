@@ -10,6 +10,7 @@ public final class MetricsStore {
     private var refreshTask: Task<Void, Never>?
     private var refreshInterval: Duration
     private var isRunning = false
+    private let videoProvider = VideoAppProvider()
 
     public init(
         provider: any SystemMetricsProviding = MacSystemMetricsProvider(),
@@ -50,6 +51,10 @@ public final class MetricsStore {
         }
     }
 
+    public func setDeepSeekApiKey(_ key: String) {
+        provider.setDeepSeekApiKey(key)
+    }
+
     public func refreshDeepSeek() {
         let providerCopy = provider
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -69,9 +74,11 @@ public final class MetricsStore {
 
     public func refresh() {
         let providerCopy = provider
+        let videoP = videoProvider
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var p = providerCopy
-            let snap = p.snapshot()
+            var snap = p.snapshot()
+            snap.video = videoP.snapshot()
             DispatchQueue.main.async {
                 self?.snapshot = snap
                 self?.provider = p

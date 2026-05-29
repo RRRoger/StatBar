@@ -16,14 +16,17 @@ StatBar is a macOS menu bar system monitoring tool built with Swift/SwiftUI. It 
 ## Build & Run
 
 ```bash
-# Run all tests (24 tests, Swift Testing framework)
+# Run all tests (Swift Testing framework)
 swift test
 
 # Build debug
 swift build
 
-# Build release .app (auto-increments build version in version.txt)
+# Build release .app (auto-increments patch version: 0.0.1 → 0.0.2)
 ./scripts/build-app.sh
+
+# Kill running instance, build, and launch
+pkill -f StatBar 2>/dev/null; sleep 0.3; ./scripts/build-app.sh && open .build/StatBar.app
 
 # Open the packaged menu bar app
 open .build/StatBar.app
@@ -33,6 +36,22 @@ xcodebuild -project StatBar.xcodeproj -scheme StatBar build
 xcodebuild -project StatBar.xcodeproj -scheme StatBar test
 xcodebuild -project StatBar.xcodeproj -scheme StatBar -only-testing StatBarCoreTests/ClassName/methodName test
 ```
+
+**⚠️ 每次修改代码后，必须执行以下命令编译、部署并重启 App：**
+
+```bash
+pkill -f StatBar 2>/dev/null; sleep 0.3; ./scripts/build-app.sh && rm -rf /Applications/StatBar.app && cp -R .build/StatBar.app /Applications/StatBar.app && open /Applications/StatBar.app
+```
+
+这是开发流程的最后一步，不可省略。每次代码改动完成后都要执行，确保用户看到的是最新版本。**注意：必须先 `rm -rf` 再 `cp -R`，否则旧文件不会被覆盖。**
+
+脚本会自动递增 `version.txt` 中的 patch 版本号（如 `0.0.1` → `0.0.2`），同时更新 `CFBundleShortVersionString` 和 `CFBundleVersion`。
+
+## Task 管理
+
+任务清单维护在 `docs/task.md`。完成一个任务后，将其从 `## TODO` 移到 `## DONE` 并标记 `[x]`。
+
+脚本会自动递增 `version.txt` 中的 patch 版本号（如 `0.0.1` → `0.0.2`），同时更新 `CFBundleShortVersionString` 和 `CFBundleVersion`。
 
 ## Release Process
 

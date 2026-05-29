@@ -98,15 +98,32 @@ public struct ProfileSettings: Codable, Equatable, Sendable {
     public var subtitle: String {
         didSet { subtitle = Self.normalized(subtitle, fallback: Self.defaultSubtitle) }
     }
+    public var avatarPath: String
+    public var deepSeekApiKey: String
 
-    public init(displayName: String = Self.defaultDisplayName, subtitle: String = Self.defaultSubtitle) {
+    public init(
+        displayName: String = Self.defaultDisplayName,
+        subtitle: String = Self.defaultSubtitle,
+        avatarPath: String = "",
+        deepSeekApiKey: String = ""
+    ) {
         self.displayName = Self.normalized(displayName, fallback: Self.defaultDisplayName)
         self.subtitle = Self.normalized(subtitle, fallback: Self.defaultSubtitle)
+        self.avatarPath = avatarPath
+        self.deepSeekApiKey = deepSeekApiKey
     }
 
     private static func normalized(_ value: String, fallback: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? fallback : trimmed
+    }
+}
+
+public struct NotchLayoutConfig: Codable, Equatable, Sendable {
+    public var enabled: Bool = true
+
+    public init(enabled: Bool = true) {
+        self.enabled = enabled
     }
 }
 
@@ -118,17 +135,20 @@ public struct StatBarSettings: Codable, Equatable, Sendable {
     public var refresh: RefreshSettings
     public var alerts: AlertSettings
     public var profile: ProfileSettings
+    public var notchLayout: NotchLayoutConfig
 
     public init(
         menuBar: MenuBarConfig = MenuBarConfig(),
         refresh: RefreshSettings = RefreshSettings(),
         alerts: AlertSettings = AlertSettings(),
-        profile: ProfileSettings = ProfileSettings()
+        profile: ProfileSettings = ProfileSettings(),
+        notchLayout: NotchLayoutConfig = NotchLayoutConfig()
     ) {
         self.menuBar = menuBar
         self.refresh = refresh
         self.alerts = alerts
         self.profile = profile
+        self.notchLayout = notchLayout
     }
 
     public static func load() -> StatBarSettings {
