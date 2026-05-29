@@ -2,8 +2,6 @@
 
 macOS 灵动岛风格系统监控工具，悬浮在屏幕顶部中央，实时显示系统状态。
 
-<img src="screenshot.png" width="600" alt="StatBar 截图">
-
 ## 功能
 
 ### 灵动岛
