@@ -206,19 +206,25 @@ public struct TopProcessesProvider: Sendable {
     public func snapshot() -> [TopProcessInfo] {
         guard let output = Process.runWithTimeout(
             launchPath: "/bin/ps",
-            arguments: ["-A", "-o", "pid,%cpu,comm", "-r"],
+            arguments: ["-A", "-o", "pid=,%cpu=,comm=", "-r"],
             timeout: 1.0
         ) else { return [] }
 
         var processes: [TopProcessInfo] = []
 
-        for line in output.components(separatedBy: "\n").dropFirst() {
-            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard parts.count >= 3 else { continue }
-            guard let cpu = Double(parts[1]) else { continue }
-            let rawName = String(parts.suffix(from: 2).joined(separator: " "))
-            guard !rawName.hasPrefix("-") else { continue }
-            let name = (rawName as NSString).lastPathComponent
+        for line in output.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            // Line format: "  PID  %CPU /path/to/comm"
+            // PID and %CPU are fixed-position, rest is the path
+            let scanner = Scanner(string: trimmed)
+            guard scanner.scanInt() != nil else { continue } // skip PID
+            guard let cpu = scanner.scanDouble() else { continue }
+            let rest = scanner.currentIndex..<trimmed.endIndex
+            let rawPath = String(trimmed[rest]).trimmingCharacters(in: .whitespaces)
+            guard !rawPath.isEmpty, !rawPath.hasPrefix("-") else { continue }
+            let name = (rawPath as NSString).lastPathComponent
+            guard !name.isEmpty else { continue }
             processes.append(TopProcessInfo(name: name, cpuPercent: cpu))
             if processes.count >= 5 { break }
         }
