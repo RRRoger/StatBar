@@ -207,12 +207,13 @@ public struct TopProcessesProvider: Sendable {
         guard let output = Process.runWithTimeout(
             launchPath: "/bin/ps",
             arguments: ["-A", "-o", "pid=,%cpu=,comm=", "-r"],
-            timeout: 1.0
+            timeout: 3.0
         ) else { return [] }
 
         var processes: [TopProcessInfo] = []
+        let lines = output.components(separatedBy: "\n")
 
-        for line in output.components(separatedBy: "\n") {
+        for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { continue }
             // Line format: "  PID  %CPU /path/to/comm"
@@ -246,9 +247,20 @@ extension Process {
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
 
+        // Read data incrementally to avoid pipe buffer deadlock
+        let collector = DataCollector()
+        let readHandle = pipe.fileHandleForReading
+        readHandle.readabilityHandler = { [collector] handle in
+            let data = handle.availableData
+            if !data.isEmpty {
+                collector.append(data)
+            }
+        }
+
         do {
             try task.run()
         } catch {
+            readHandle.readabilityHandler = nil
             return nil
         }
 
@@ -257,12 +269,37 @@ extension Process {
             Thread.sleep(forTimeInterval: 0.05)
         }
 
+        readHandle.readabilityHandler = nil
+
         if task.isRunning {
             task.terminate()
             return nil
         }
 
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        // Drain any remaining data
+        let remaining = readHandle.readDataToEndOfFile()
+        if !remaining.isEmpty {
+            collector.append(remaining)
+        }
+
+        return String(data: collector.data, encoding: .utf8)
+    }
+}
+
+private final class DataCollector: @unchecked Sendable {
+    private var _data = Data()
+    private let lock = NSLock()
+
+    func append(_ newData: Data) {
+        lock.lock()
+        _data.append(newData)
+        lock.unlock()
+    }
+
+    var data: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return _data
     }
 }
 
