@@ -112,10 +112,14 @@ public enum SystemMood: String, Equatable, Sendable {
     case onFire     // 🔥  CPU > 95%
 
     public init(cpuUsage: Double, memoryUsage: Double) {
-        let load = max(cpuUsage, memoryUsage)
+        // Memory is the primary signal (stable, meaningful).
+        // CPU only boosts mood when extremely high (95%+).
+        let load = memoryUsage >= 95 || cpuUsage >= 98
+            ? max(cpuUsage, memoryUsage)
+            : memoryUsage
         switch load {
-        case ..<10:  self = .idle
-        case ..<50:  self = .relaxed
+        case ..<30:  self = .idle
+        case ..<60:  self = .relaxed
         case ..<80:  self = .busy
         case ..<95:  self = .stressed
         default:     self = .onFire

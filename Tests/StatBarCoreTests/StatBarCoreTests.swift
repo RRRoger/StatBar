@@ -434,54 +434,57 @@ import Testing
 
 // MARK: - SystemMood
 
-@Test func systemMoodIdleWhenLowLoad() {
-    let mood = SystemMood(cpuUsage: 5, memoryUsage: 8)
+@Test func systemMoodIdleWhenLowMemory() {
+    let mood = SystemMood(cpuUsage: 80, memoryUsage: 20)
     #expect(mood == .idle)
     #expect(mood.emoji == "😌")
 }
 
-@Test func systemMoodRelaxedWhenModerateLoad() {
-    let mood = SystemMood(cpuUsage: 30, memoryUsage: 20)
+@Test func systemMoodRelaxedWhenModerateMemory() {
+    let mood = SystemMood(cpuUsage: 90, memoryUsage: 45)
     #expect(mood == .relaxed)
     #expect(mood.emoji == "🙂")
 }
 
-@Test func systemMoodBusyWhenHighLoad() {
-    let mood = SystemMood(cpuUsage: 65, memoryUsage: 50)
+@Test func systemMoodBusyWhenHighMemory() {
+    let mood = SystemMood(cpuUsage: 30, memoryUsage: 65)
     #expect(mood == .busy)
     #expect(mood.emoji == "😐")
 }
 
-@Test func systemMoodStressedWhenVeryHighLoad() {
-    let mood = SystemMood(cpuUsage: 90, memoryUsage: 70)
+@Test func systemMoodStressedWhenVeryHighMemory() {
+    let mood = SystemMood(cpuUsage: 20, memoryUsage: 85)
     #expect(mood == .stressed)
     #expect(mood.emoji == "😤")
 }
 
-@Test func systemMoodOnFireWhenExtremeLoad() {
-    let mood = SystemMood(cpuUsage: 97, memoryUsage: 50)
+@Test func systemMoodOnFireWhenMemoryFull() {
+    let mood = SystemMood(cpuUsage: 50, memoryUsage: 96)
     #expect(mood == .onFire)
     #expect(mood.emoji == "🔥")
 }
 
-@Test func systemMoodUsesMaxOfCpuAndMemory() {
-    // CPU low but memory very high → stressed
-    let mood = SystemMood(cpuUsage: 5, memoryUsage: 92)
-    #expect(mood == .stressed)
+@Test func systemMoodCpuBoostsOnlyAtExtreme() {
+    // CPU 98%+ triggers boost even if memory is moderate
+    let mood = SystemMood(cpuUsage: 98, memoryUsage: 40)
+    #expect(mood == .onFire)
+    // CPU 95% alone does NOT boost
+    let mood2 = SystemMood(cpuUsage: 95, memoryUsage: 40)
+    #expect(mood2 == .relaxed)
 }
 
 @Test func systemMoodLabelIsChinese() {
-    #expect(SystemMood(cpuUsage: 2, memoryUsage: 2).label == "空闲")
-    #expect(SystemMood(cpuUsage: 25, memoryUsage: 25).label == "轻松")
-    #expect(SystemMood(cpuUsage: 60, memoryUsage: 60).label == "繁忙")
-    #expect(SystemMood(cpuUsage: 85, memoryUsage: 85).label == "高压")
-    #expect(SystemMood(cpuUsage: 99, memoryUsage: 99).label == "过载")
+    #expect(SystemMood(cpuUsage: 5, memoryUsage: 10).label == "空闲")
+    #expect(SystemMood(cpuUsage: 5, memoryUsage: 40).label == "轻松")
+    #expect(SystemMood(cpuUsage: 5, memoryUsage: 65).label == "繁忙")
+    #expect(SystemMood(cpuUsage: 5, memoryUsage: 85).label == "高压")
+    #expect(SystemMood(cpuUsage: 5, memoryUsage: 97).label == "过载")
 }
 
 @Test func systemSnapshotMoodComputed() {
     let snapshot = SystemSnapshot(
-        cpu: CPUMetrics(usage: 96),
-        memory: MemoryMetrics(usedBytes: 1, totalBytes: 100)
+        cpu: CPUMetrics(usage: 50),
+        memory: MemoryMetrics(usedBytes: 97, totalBytes: 100)
     )
     #expect(snapshot.mood == .onFire)
 }
