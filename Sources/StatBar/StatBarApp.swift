@@ -565,7 +565,7 @@ private struct MenuBarContentView: View {
             Text("📊 Top Processes")
                 .font(.callout)
 
-            ForEach(snapshot.topProcesses, id: \.name) { process in
+            ForEach(Array(snapshot.topProcesses.enumerated()), id: \.offset) { _, process in
                 HStack {
                     Text(process.name)
                         .font(.caption)
